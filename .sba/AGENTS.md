@@ -1,6 +1,6 @@
 # NAccount 部署操作规则
 
-`.sba/` 是本仓库唯一的部署入口与规则目录。用户、AI 和 SpringBok 均从这里读取 `manifest.json`，调用 `deploy.ps1`；不要再建立平行部署脚本或直接改动 `melody-auth/` 中的 Wrangler 配置。
+`.sba/` 是本仓库唯一的部署入口与规则目录。SpringBok 读取 v2 `manifest.json` 并调用 `springbok.ps1`，应用流程复用 `cloudflare.py`；用户/AI 原有 `deploy.ps1` CLI 保留。统一入口说明见 `SPRINGBOK.md`；不要另建平行部署目录或直接改动 `melody-auth/` 中的 Wrangler 配置。
 
 - 先读本目录 `README.md` 和 `manifest.json`。从 NAccount 根目录或其他本地/持久映射盘工作目录调用入口；不要从 UNC 工作目录调用。相对 `--config` 路径以调用者当前工作目录为基准。
 - `plan` 是离线校验；`prepare` 只导出隔离源码；`build` 会联网下载 npm 依赖，但不写 Cloudflare。它们均不是发布授权，也不是业务验收。

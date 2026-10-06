@@ -1,63 +1,14 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "id": "naccount-cloudflare",
   "name": "NAccount Cloudflare deployment",
-  "entrypoint": "deploy.ps1",
-  "workingDirectory": "caller",
-  "configPathBase": "caller",
-  "invocation": {
-    "executable": "powershell.exe",
-    "arguments": ["-NoProfile", "-NonInteractive", "-File", "{absoluteEntrypoint}", "{action}", "{actionArguments}", "--json"],
-    "jsonFlagPosition": "after action"
-  },
-  "minimumRuntime": {
-    "powershell": "5.1",
-    "python": "3.11",
-    "git": "required",
-    "node": "22 for build and key bootstrap",
-    "npm": "required for build"
-  },
-  "resultProtocol": {
-    "flag": "--json",
-    "stdout": "one JSON object for parsed actions; schemaVersion=1, ok, action, result or error",
-    "stderr": "diagnostic logs; not a stable protocol",
-    "successExitCode": 0,
-    "argumentError": "nonzero exit; argparse may write only to stderr"
-  },
+  "version": "1.0.0",
+  "entrypoint": "springbok.ps1",
+  "runtime": { "runner": "windows-2025", "powershell": "5.1", "python": "3.12", "node": "22" },
   "actions": {
-    "plan": {
-      "requiredArguments": ["--config"],
-      "optionalArguments": ["--component", "--json"],
-      "cloudWrites": false,
-      "network": false
-    },
-    "prepare": {
-      "requiredArguments": ["--config"],
-      "optionalArguments": ["--component", "--json"],
-      "cloudWrites": false,
-      "network": false
-    },
-    "build": {
-      "requiredArguments": ["--config"],
-      "optionalArguments": ["--component", "--json"],
-      "cloudWrites": false,
-      "network": "npm dependencies"
-    },
-    "bootstrap-keys": {
-      "requiredArguments": ["--release", "--execute"],
-      "optionalArguments": ["--json"],
-      "cloudWrites": true,
-      "requiresSeparateApproval": true
-    },
-    "publish": {
-      "requiredArguments": ["--release", "--execute"],
-      "optionalArguments": ["--migrate", "--json"],
-      "cloudWrites": true,
-      "requiresSeparateApproval": true
-    }
+    "deploy": { "timeoutSeconds": 3600 },
+    "update": { "timeoutSeconds": 3600 },
+    "verify": { "timeoutSeconds": 120 }
   },
-  "componentValues": ["server", "admin", "all"],
-  "rules": "AGENTS.md",
-  "documentation": "README.md",
-  "environmentTemplate": "environments/cloudflare.example.json"
+  "secrets": ["CLOUDFLARE_API_TOKEN", "RESEND_API_KEY"]
 }
