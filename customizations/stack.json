@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "upstreamUrl": "https://github.com/ValueMelody/melody-auth.git",
+  "upstreamBranch": "main",
+  "integrationBranch": "naccount/main",
+  "commitTopicTrailer": "NAccount-Patch-Topic",
+  "topics": []
+}

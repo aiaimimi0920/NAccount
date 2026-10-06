@@ -1,0 +1,6 @@
+* text=auto eol=lf
+*.ps1 text eol=lf
+customizations/stack.json -text
+customizations/current.json -text
+customizations/generated/** -text
+*.bundle binary

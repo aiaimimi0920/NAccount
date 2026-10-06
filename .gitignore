@@ -1,0 +1,14 @@
+/melody-auth/
+/melody-auth.initialize-*/
+/.sba/environments/*.local.json
+/.sba/secrets/
+**/node_modules/
+**/__pycache__/
+*.pyc
+.env
+.env.*
+!.env.example
+.dev.vars*
+*.pem
+*.key
+*.p8

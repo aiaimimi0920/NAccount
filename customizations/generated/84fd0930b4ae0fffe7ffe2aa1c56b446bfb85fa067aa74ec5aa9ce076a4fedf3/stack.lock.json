@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "configSha256": "34256b0eecdd2c01b0416f02a03a643f9e403ff2d8d0110c8d8a63d3cfc93e56",
+  "base": "290efee29e4ff7329804530c61880c9c5d36e7fb",
+  "head": "290efee29e4ff7329804530c61880c9c5d36e7fb",
+  "tree": "ecefd00b28d3ec20cfe6d27442d8b7bebede3b6e",
+  "patches": [],
+  "files": {
+    "series.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  }
+}
