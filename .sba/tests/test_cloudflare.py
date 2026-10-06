@@ -165,14 +165,12 @@ class DeploymentTests(unittest.TestCase):
     def test_manifest_owns_actions_and_entrypoint(self):
         folder = Path(deploy.__file__).resolve().parent
         manifest = json.loads((folder / "manifest.json").read_text(encoding="utf-8"))
-        self.assertEqual(manifest["schemaVersion"], 1)
-        self.assertEqual(manifest["entrypoint"], "deploy.ps1")
+        self.assertEqual(manifest["schemaVersion"], 2)
+        self.assertEqual(manifest["entrypoint"], "springbok.ps1")
         self.assertTrue((folder / manifest["entrypoint"]).is_file())
-        self.assertEqual(set(manifest["actions"]), {"plan", "prepare", "build", "bootstrap-keys", "publish"})
-        self.assertFalse(manifest["actions"]["plan"]["cloudWrites"])
-        for action in ("bootstrap-keys", "publish"):
-            self.assertTrue(manifest["actions"][action]["cloudWrites"])
-            self.assertIn("--execute", manifest["actions"][action]["requiredArguments"])
+        self.assertEqual(set(manifest["actions"]), {"deploy", "update", "verify"})
+        self.assertTrue((folder / 'deploy.ps1').is_file())
+        self.assertEqual(manifest['runtime']['runner'], 'windows-2025')
 
     def built_fixture(self):
         payload = self.temp / "source/server/dist/worker.js"
