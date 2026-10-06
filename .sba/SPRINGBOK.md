@@ -78,7 +78,9 @@ OIDC/JWKS 与后台 HTTP 就绪，不冒充注册、邮件和数据保留的完�
   不含秘密；应用通过 `CLOUDFLARE_EMAIL` binding 发信，限制为指定发件地址。
   manifest 仅要求部署所需 `CLOUDFLARE_API_TOKEN`，不再要求未使用的 Resend 密钥。
 - 隔离源码中的 TypeScript 类型检查及邮件 provider 的 3 项 Vitest 测试通过；
-  `.sba/tests` 29 项通过，`git diff --check` 通过。错误或缺少 messageId 不报发送成功。
+  `.sba/tests` 29 项通过，源码 `git diff --check` 通过。错误或缺少 messageId 不报发送成功。
+  新生成的 patch 被作为文件整体检查时，空白上下文标记有两处 trailing whitespace
+  提示；这是 Git patch 格式的上下文空行，不手工修改生成文件。
 - 生产配置的 server 构建及 Wrangler dry-run 通过，回执位于
   `linshi/naccount-release-950sc394/release.json`，源码 head 为上述补丁提交，
   `state=built`、`cloudWrites=false`。这只是本地构建检查，不是 GitHub 正式部署。
