@@ -68,3 +68,19 @@ OIDC/JWKS 与后台 HTTP 就绪，不冒充注册、邮件和数据保留的完�
 - <https://developers.cloudflare.com/email-service/platform/pricing/index.md>
 - <https://developers.cloudflare.com/email-service/get-started/send-emails/index.md>
 - <https://developers.cloudflare.com/api/resources/email_sending/index.md>
+
+## SBA-03-S02 邮件适配验证
+
+- Cloudflare 原生邮件 provider 已进入独立上游补丁提交
+  `67c0882f81bb25cd2cfb8ff18dca25a83506b36f`，topic 为 `cloudflare-email`。
+  已通过 `stack.py export` 和 `verify`，主仓库只保存补丁、bundle 和锁定信息。
+- `.sba/environments/cloudflare.production.json` 保存获准域名和持久资源 ID，
+  不含秘密；应用通过 `CLOUDFLARE_EMAIL` binding 发信，限制为指定发件地址。
+  manifest 仅要求部署所需 `CLOUDFLARE_API_TOKEN`，不再要求未使用的 Resend 密钥。
+- 隔离源码中的 TypeScript 类型检查及邮件 provider 的 3 项 Vitest 测试通过；
+  `.sba/tests` 29 项通过，`git diff --check` 通过。错误或缺少 messageId 不报发送成功。
+- 生产配置的 server 构建及 Wrangler dry-run 通过，回执位于
+  `linshi/naccount-release-950sc394/release.json`，源码 head 为上述补丁提交，
+  `state=built`、`cloudWrites=false`。这只是本地构建检查，不是 GitHub 正式部署。
+- 待本子项合并后，从新的 GitHub 固定 SHA 重建；后续由云端 SpringBok 发起
+  GitHub runner 执行实际发布。邮件送达、注册、登录和后台授权仍待 SBA-05 验收。

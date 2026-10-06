@@ -10,5 +10,5 @@
     "update": { "timeoutSeconds": 3600 },
     "verify": { "timeoutSeconds": 120 }
   },
-  "secrets": ["CLOUDFLARE_API_TOKEN", "RESEND_API_KEY"]
+  "secrets": ["CLOUDFLARE_API_TOKEN"]
 }

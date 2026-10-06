@@ -68,6 +68,21 @@ class DeploymentTests(unittest.TestCase):
         with self.assertRaisesRegex(StackError, "did not pass"):
             deploy.checked_release(self.temp)
 
+    def test_cloudflare_email_binding_uses_only_the_configured_sender(self):
+        server = self.temp / 'server'
+        server.mkdir()
+        (server / 'wrangler.toml').write_text('name="upstream"\n[vars]\nSAFE=true\n', encoding='utf-8')
+        self.settings['vars'].update(EMAIL_PROVIDER_NAME='cloudflare', CLOUDFLARE_SENDER_ADDRESS='accounts@example.com')
+        write_json(self.path, self.settings)
+        deploy.config(self.path, 'server')
+        generated = deploy.server_config(self.temp, self.settings)
+        self.assertEqual(generated['send_email'], [{'name': 'CLOUDFLARE_EMAIL', 'allowed_sender_addresses': ['accounts@example.com']}])
+        self.assertNotIn('CLOUDFLARE_API_TOKEN', str(generated))
+        self.settings['vars']['CLOUDFLARE_SENDER_ADDRESS'] = 'bad\naddress'
+        write_json(self.path, self.settings)
+        with self.assertRaises(StackError):
+            deploy.config(self.path, 'server')
+
     def test_runtime_secrets_not_passed_to_local_build(self):
         (self.temp / "server").mkdir()
         self.settings["server"]["secretNames"] = ["RESEND_API_KEY"]
