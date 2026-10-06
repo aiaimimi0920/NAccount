@@ -61,6 +61,10 @@ def config(path: Path, component: str) -> dict:
             raise StackError("Invalid application secret name")
     if "secret" in result.get("admin", {}) or "secrets" in result:
         raise StackError("Do not store secret values in deployment configuration")
+    if result.get('vars', {}).get('EMAIL_PROVIDER_NAME') == 'cloudflare':
+        sender = result['vars'].get('CLOUDFLARE_SENDER_ADDRESS')
+        if not isinstance(sender, str) or not re.fullmatch(r'[a-zA-Z0-9._+-]+@[a-z0-9.-]+\.[a-z]{2,}', sender):
+            raise StackError('Cloudflare Email requires an explicit sender address')
     return result
 
 
@@ -79,6 +83,9 @@ def server_config(source: Path, settings: dict) -> dict:
                                  "database_id": settings["database"]["id"], "migrations_dir": "./migrations/sqlite"}]
     upstream["vars"].update(settings.get("vars", {}))
     upstream["vars"].update({"AUTH_SERVER_URL": settings["server"]["url"], "ENVIRONMENT": "prod"})
+    if settings.get('vars', {}).get('EMAIL_PROVIDER_NAME') == 'cloudflare':
+        upstream['send_email'] = [{'name': 'CLOUDFLARE_EMAIL',
+                                   'allowed_sender_addresses': [settings['vars']['CLOUDFLARE_SENDER_ADDRESS']]}]
     return upstream
 
 

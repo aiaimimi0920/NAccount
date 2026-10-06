@@ -38,3 +38,51 @@ OIDC/JWKS 与后台 HTTP 就绪，不冒充注册、邮件和数据保留的完�
   checkout 重建/构建，`SBA-04` 接入云端任务和 GitHub runner。不从本地开发目录发布。
 - Cloudflare 只读盘点未发现 NAccount 的 D1/KV；未找到已提供的 Resend/SMTP 凭据。
   已请求确认域名和邮件发送配置；本项未创建云资源、数据库行、密钥或部署。
+
+## 后续资源与邮件核查（2026-10-06）
+
+- `SBA-03-S01` 已通过 NAccount PR #1 正常合并；main 为
+  `f7194d268ff91a3579c7ae60cd79aece46aff717`。仓库 Actions workflow 数为 0，
+  仅记录实际本地检查，不声称远端 CI 通过。Checks API 的现有 PAT 返回 403，
+  未扩大权限，合并使用正常 SHA 绑定接口，未绕过保护。
+- 用户随后确认采用 `auth.aiaimimi.com` 与 `accounts-admin.aiaimimi.com`，授权使用
+  已提供的 Cloudflare 密钥开通所需服务，不购买或升级套餐。
+- 独立创建 D1 `naccount-production`：`05aef985-6154-4fcb-9fa7-a8a91d235597`；
+  KV `naccount-production-kv`：`7d38e86188f44943b12be684549b3d9c`。未删除其他资源，
+  未写业务表或初始化密钥。这些持久资源 ID 在后续更新中必须复用。
+- 从 GitHub 干净检出上述 main 到 `linshi/naccount-sba-03-github-f7194d2`，
+  `scripts/stack.py init` 成功，锁定上游与重建 head 均为
+  `290efee29e4ff7329804530c61880c9c5d36e7fb`。没有用本地开发源码冒充 GitHub 来源。
+- 已联网核实 Cloudflare 官方 Email Service 与 pricing：任意收件人发送要求
+  Workers Paid，含每月 3,000 封，超额按官方价格收费；只发往已验证地址的免费转发
+  不能替代产品邮件。账户订阅 API 已确认现有 Workers Paid，无需新购买。
+- Email Sending API 已核实 `tx-mail.aiaimimi.com` 为 enabled，ID
+  `ca904a03977844dcb4f81cff7e73fad1`；优先复用现有发信域，不覆盖其 DNS 配置。
+  尚未执行发信测试，不将 enabled 当作已送达证据。
+- 当前领取 `SBA-03-S02` 的 Cloudflare 邮件适配，负责人主 AI：在应用补丁栈增加
+  email binding provider，并由 `.sba` 生成绑定配置，不在线上应用放账户管理 token。
+  完成后重新从 GitHub 固定版本构建，再通过 SpringBok 执行实际发布。
+
+官方依据（本轮 HTTP 200）：
+- <https://developers.cloudflare.com/email-service/index.md>
+- <https://developers.cloudflare.com/email-service/platform/pricing/index.md>
+- <https://developers.cloudflare.com/email-service/get-started/send-emails/index.md>
+- <https://developers.cloudflare.com/api/resources/email_sending/index.md>
+
+## SBA-03-S02 邮件适配验证
+
+- Cloudflare 原生邮件 provider 已进入独立上游补丁提交
+  `67c0882f81bb25cd2cfb8ff18dca25a83506b36f`，topic 为 `cloudflare-email`。
+  已通过 `stack.py export` 和 `verify`，主仓库只保存补丁、bundle 和锁定信息。
+- `.sba/environments/cloudflare.production.json` 保存获准域名和持久资源 ID，
+  不含秘密；应用通过 `CLOUDFLARE_EMAIL` binding 发信，限制为指定发件地址。
+  manifest 仅要求部署所需 `CLOUDFLARE_API_TOKEN`，不再要求未使用的 Resend 密钥。
+- 隔离源码中的 TypeScript 类型检查及邮件 provider 的 3 项 Vitest 测试通过；
+  `.sba/tests` 29 项通过，源码 `git diff --check` 通过。错误或缺少 messageId 不报发送成功。
+  新生成的 patch 被作为文件整体检查时，空白上下文标记有两处 trailing whitespace
+  提示；这是 Git patch 格式的上下文空行，不手工修改生成文件。
+- 生产配置的 server 构建及 Wrangler dry-run 通过，回执位于
+  `linshi/naccount-release-950sc394/release.json`，源码 head 为上述补丁提交，
+  `state=built`、`cloudWrites=false`。这只是本地构建检查，不是 GitHub 正式部署。
+- 待本子项合并后，从新的 GitHub 固定 SHA 重建；后续由云端 SpringBok 发起
+  GitHub runner 执行实际发布。邮件送达、注册、登录和后台授权仍待 SBA-05 验收。

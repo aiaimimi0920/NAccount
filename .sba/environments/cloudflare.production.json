@@ -1,0 +1,21 @@
+{
+  "accountId": "bea2e3be0577ee4f7b3ffae4df6f53bb",
+  "database": { "name": "naccount-production", "id": "05aef985-6154-4fcb-9fa7-a8a91d235597" },
+  "kvId": "7d38e86188f44943b12be684549b3d9c",
+  "server": { "name": "naccount-auth", "url": "https://auth.aiaimimi.com", "secretNames": [] },
+  "admin": {
+    "name": "naccount-admin",
+    "url": "https://accounts-admin.aiaimimi.com",
+    "spaClientId": "",
+    "s2sClientId": ""
+  },
+  "vars": {
+    "COMPANY_LOGO_URL": "",
+    "COMPANY_EMAIL_LOGO_URL": "",
+    "EMAIL_SENDER_NAME": "NAccount",
+    "EMAIL_PROVIDER_NAME": "cloudflare",
+    "CLOUDFLARE_SENDER_ADDRESS": "accounts@tx-mail.aiaimimi.com",
+    "SUPPORTED_LOCALES": ["en", "zh"],
+    "ENABLE_LOCALE_SELECTOR": true
+  }
+}
