@@ -17,6 +17,40 @@ from stack import StackError, read_json, scratch, write_json
 
 
 class SpringBokTests(unittest.TestCase):
+    def test_deployment_form_matches_public_configuration_and_owns_no_credentials(self):
+        declaration = read_json(sba.ROOT / '.sba/deployment.json')
+        self.assertEqual(declaration['schemaVersion'], 1)
+        self.assertEqual(declaration['target'], 'cloudflare-workers')
+        self.assertEqual(declaration['accountPath'], ['accountId'])
+        self.assertEqual([r['kind'] for r in declaration['resources']], ['d1', 'kv'])
+        self.assertEqual([t['kind'] for t in declaration['targets']], ['worker', 'domain', 'worker', 'domain'])
+        settings = copy.deepcopy(declaration['defaults'])
+        def assign(path, value):
+            row = settings
+            for key in path[:-1]:
+                row = row.setdefault(key, {})
+            row[path[-1]] = value
+        assign(declaration['accountPath'], self.settings['accountId'])
+        for field in declaration['fields']:
+            value = self.settings
+            for key in field['path']:
+                value = value[key]
+            assign(field['path'], copy.deepcopy(value))
+        for resource in declaration['resources']:
+            assign(resource['idPath'], self.settings['database']['id'] if resource['kind'] == 'd1' else self.settings['kvId'])
+            if resource['namePath']:
+                assign(resource['namePath'], self.settings['database']['name'])
+        self.assertEqual(settings, self.settings)
+        self.assertEqual(declaration['defaults']['server']['secretNames'], [])
+        self.assertEqual(declaration['defaults']['admin']['spaClientId'], '')
+        self.assertEqual(declaration['defaults']['admin']['s2sClientId'], '')
+        self.assertEqual(declaration['defaults']['vars']['EMAIL_PROVIDER_NAME'], 'cloudflare')
+        self.assertEqual(declaration['defaults']['server']['name'], '')
+        with patch.object(sba, 'clean'), patch.object(sba, 'git', return_value='a' * 40):
+            value = copy.deepcopy(self.request)
+            value['configuration'] = settings
+            self.assertEqual(sba.validated_request(value, sba.ROOT)['configuration'], settings)
+
     def setUp(self):
         self.temp = scratch('naccount-sba-test-')
         self.settings = {'accountId': '1' * 32, 'kvId': '2' * 32,

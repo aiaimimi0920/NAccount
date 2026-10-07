@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "target": "cloudflare-workers",
+  "accountPath": ["accountId"],
+  "defaults": {
+    "server": {"name": "", "url": "", "secretNames": []},
+    "admin": {"name": "", "url": "", "spaClientId": "", "s2sClientId": ""},
+    "vars": {
+      "COMPANY_LOGO_URL": "",
+      "COMPANY_EMAIL_LOGO_URL": "",
+      "EMAIL_SENDER_NAME": "NAccount",
+      "EMAIL_PROVIDER_NAME": "cloudflare",
+      "CLOUDFLARE_SENDER_ADDRESS": "",
+      "SUPPORTED_LOCALES": ["en", "zh"],
+      "ENABLE_LOCALE_SELECTOR": true
+    }
+  },
+  "fields": [
+    {"path": ["server", "name"], "label": "认证服务 Worker 名称（新实例）", "type": "text", "required": true},
+    {"path": ["server", "url"], "label": "认证服务 HTTPS 自定义域名", "type": "text", "required": true},
+    {"path": ["admin", "name"], "label": "管理后台 Worker 名称（新实例）", "type": "text", "required": true},
+    {"path": ["admin", "url"], "label": "管理后台 HTTPS 自定义域名（须不同）", "type": "text", "required": true},
+    {"path": ["vars"], "label": "公开变量 JSON（须填写已验证的 Cloudflare 发信地址）", "type": "json", "required": true}
+  ],
+  "targets": [
+    {"kind": "worker", "path": ["server", "name"]},
+    {"kind": "domain", "path": ["server", "url"]},
+    {"kind": "worker", "path": ["admin", "name"]},
+    {"kind": "domain", "path": ["admin", "url"]}
+  ],
+  "resources": [
+    {"key": "database", "label": "专用于新实例的 D1 数据库", "kind": "d1", "idPath": ["database", "id"], "namePath": ["database", "name"]},
+    {"key": "session", "label": "专用于新实例的 KV namespace", "kind": "kv", "idPath": ["kvId"], "namePath": null}
+  ]
+}
