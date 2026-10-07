@@ -1,12 +1,15 @@
 """应用统一入口的边界与顺序测试，不连接真实云资源。"""
 import copy
 import io
+import json
 import os
 from pathlib import Path
 import sys
 import unittest
 from contextlib import redirect_stderr
 from unittest.mock import patch
+from urllib.error import HTTPError
+from urllib.request import Request
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import springbok as sba
@@ -105,6 +108,61 @@ class SpringBokTests(unittest.TestCase):
                 sba.execute(self.request)
             self.assertEqual(publish.call_count, 1)
             admin.assert_not_called()
+
+    def test_readiness_uses_identifiable_agent_without_credentials(self):
+        calls = []
+        payloads = [{'issuer': self.settings['server']['url']}, {'keys': [{'kid': 'test-key'}]}, {}]
+        def response(request, *, timeout):
+            self.assertIsInstance(request, Request)
+            self.assertEqual(request.get_method(), 'GET')
+            self.assertEqual(request.get_header('User-agent'), 'NAccount-SBA/2.0')
+            self.assertEqual(dict(request.header_items()), {'User-agent': 'NAccount-SBA/2.0'})
+            self.assertIsNone(request.data)
+            self.assertEqual(timeout, 30)
+            calls.append(request.full_url)
+            stream = io.BytesIO(json.dumps(payloads[len(calls) - 1]).encode())
+            stream.status = 200
+            return stream
+        with patch.dict(os.environ, {'CLOUDFLARE_API_TOKEN': 'private-test-value'}), patch.object(sba, 'urlopen', side_effect=response):
+            checks = sba.readiness(self.settings)
+        self.assertEqual(calls, ['https://auth.example.com/.well-known/openid-configuration',
+                                 'https://auth.example.com/.well-known/jwks.json', 'https://admin.example.com'])
+        self.assertEqual(checks, [{'id': name, 'passed': True} for name in
+                                 ('oidc-discovery', 'jwks-ready', 'admin-http-ready')])
+
+    def test_readiness_denial_stops_without_retry_or_cloud_writes(self):
+        failure = HTTPError(self.settings['server']['url'], 403, 'Forbidden', {}, None)
+        with patch.object(sba, 'urlopen', side_effect=failure) as request, \
+                patch.object(sba.deploy, 'cloud_api') as cloud, patch.object(sba.deploy, 'publish') as publish:
+            with self.assertRaises(HTTPError):
+                sba.readiness(self.settings)
+        self.assertEqual(request.call_count, 1)
+        cloud.assert_not_called(); publish.assert_not_called()
+
+    def test_readiness_preserves_issuer_and_nonempty_jwks_checks(self):
+        for payloads, message, count in [([{'issuer': 'https://wrong.example.com'}], 'issuer mismatch', 1),
+                                         ([{'issuer': self.settings['server']['url']}, {'keys': []}], 'JWKS empty', 2)]:
+            with self.subTest(message=message), patch.object(sba, 'urlopen', side_effect=[
+                    io.BytesIO(json.dumps(value).encode()) for value in payloads]) as request:
+                with self.assertRaisesRegex(StackError, message):
+                    sba.readiness(self.settings)
+                self.assertEqual(request.call_count, count)
+
+    def test_post_publish_readiness_failure_stays_unknown(self):
+        request_path, result_path = self.temp / 'request.json', self.temp / 'result.json'
+        write_json(request_path, self.request)
+        def failure(_request, *, on_stage):
+            on_stage('readiness', True)
+            raise HTTPError(self.settings['server']['url'], 403, 'private-test-value', {}, None)
+        with patch.object(sys, 'argv', ['springbok.py', '--request', str(request_path), '--result', str(result_path)]), \
+                patch.dict(os.environ, {'SBA_EXECUTE': '1'}), patch.object(sba, 'execute', side_effect=failure), \
+                redirect_stderr(io.StringIO()) as logs:
+            self.assertEqual(sba.main(), 1)
+        result = read_json(result_path)
+        self.assertEqual(result['status'], 'unknown')
+        self.assertEqual(result['errorCode'], 'NACCOUNT_READINESS_FAILED')
+        self.assertEqual(result['checks'], [])
+        self.assertNotIn('private-test-value', str(result) + logs.getvalue())
 
     def test_result_failure_is_bound_and_never_contains_exception_secret(self):
         request_path, result_path = self.temp / 'request.json', self.temp / 'result.json'

@@ -8,7 +8,7 @@ import os
 from pathlib import Path
 import re
 import sys
-from urllib.request import urlopen
+from urllib.request import Request, urlopen
 
 import cloudflare as deploy
 from stack import ROOT, Stack, StackError, atomic_json, clean, git, read_json, scratch, write_json
@@ -111,15 +111,17 @@ def configure_admin(settings: dict) -> tuple[dict, str]:
 
 def readiness(settings: dict) -> list[dict]:
     checks = []
+    # 使用真实的应用探针标识，避免默认 Python-urllib 被边缘规则拒绝；不携带凭据。
+    headers = {'User-Agent': 'NAccount-SBA/2.0'}
     for suffix, key in [('/.well-known/openid-configuration', 'issuer'), ('/.well-known/jwks.json', 'keys')]:
-        with urlopen(settings['server']['url'] + suffix, timeout=30) as response:
+        with urlopen(Request(settings['server']['url'] + suffix, headers=headers), timeout=30) as response:
             payload = json.load(response)
         if key == 'issuer' and payload.get(key) != settings['server']['url']:
             raise StackError('OIDC issuer mismatch')
         if key == 'keys' and not payload.get(key):
             raise StackError('JWKS empty')
         checks.append({'id': 'oidc-discovery' if key == 'issuer' else 'jwks-ready', 'passed': True})
-    with urlopen(settings['admin']['url'], timeout=30) as response:
+    with urlopen(Request(settings['admin']['url'], headers=headers), timeout=30) as response:
         if response.status != 200:
             raise StackError('Admin page not ready')
     checks.append({'id': 'admin-http-ready', 'passed': True})
