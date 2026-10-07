@@ -9,6 +9,9 @@ if ($PSScriptRoot.StartsWith('\\') -or (Get-Location).Path.StartsWith('\\')) {
 }
 $env:PYTHONUTF8 = '1'
 $env:PYTHONDONTWRITEBYTECODE = '1'
+if ($env:RUNNER_TEMP -and -not $env:NACCOUNT_TEMP) {
+    $env:NACCOUNT_TEMP = $env:RUNNER_TEMP
+}
 $script = Join-Path $PSScriptRoot 'springbok.py'
 if (Get-Command rtk -ErrorAction SilentlyContinue) {
     & rtk proxy python $script --request $RequestPath --result $ResultPath

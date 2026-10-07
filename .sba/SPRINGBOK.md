@@ -1,5 +1,26 @@
 # SpringBok 联合部署接入
 
+## SBA-05-S08：Windows 无 RTK 的构建入口修复（2026-10-07）
+
+负责人主 AI；基线 `661eb3505f573bb55cae63c57e2a10952b454bac`。真实 SpringBok
+task `sba-20261007-naccount-36bca24` / run `37597856049` 已读源码并消费许可，
+返回 `unknown/NACCOUNT_EXECUTION_FAILED`；Actions success 仅证明制品已上传。
+新鲜目标资源检查仍无 Worker、业务表和 KV keys，但旧回执没有阶段，不能据此
+将旧任务改称未执行或自动重放。隔离 exact-SHA checkout、无凭据并模拟无 RTK，
+锁定上游初始化和 prepare 成功，首个裸 `npm ci` 启动复现 `WinError 2`。
+
+范围仅为无 RTK 时精确解析 PATH 可执行路径、固定阶段/写入边界结果、runner 临时
+目录及回归和无凭据 Windows CI。不改应用上游、目标资源、密钥、迁移或云发布逻辑。
+首次可能云写入之后一律保留 unknown；阶段缺失也 unknown，绝不输出原异常/secret。
+源码交付与真实部署分开；旧任务恢复需独立管理员批准与副作用核验，不使用 unstarted
+恢复，不 rerun、不清 DO/D1/KV。证据 `linshi/springbok-sba-05-s07-20261007/`，
+本项新验证另放 `linshi/naccount-sba-05-s08-20261007/`。
+
+本地完整标准发现 47/47 通过，真实 Windows npm version smoke 在禁用 RTK 包装时通过；
+fixed checksum actionlint 1.7.12 通过（未额外运行 ShellCheck/Pyflakes），未使用部署凭据或
+写入 Cloudflare。阶段回归覆盖 build 前失败无云调用、首次可能写入后仍 unknown、
+未知阶段默认 unknown 和异常 secret 不进结果。hosted CI、精确源码交付及真实发布另记回执。
+
 任务 `SBA-03`，负责人主 AI，2026-10-06 开始。范围为 `.sba` 统一入口、测试及说明，
 不改上游源码，不提前执行实际云端写入。用户已授权通过云端 SpringBok 从 GitHub
 部署 NAccount；本地只开发、测试并推送，不直接发布本地工作区。
