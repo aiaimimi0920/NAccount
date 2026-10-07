@@ -1,5 +1,24 @@
 # SpringBok 联合部署接入
 
+## DC-03-B：自助部署表单声明（2026-10-07）
+
+主 AI；基线 `f0bba49`，分支 `feat/dc-03-b-deployment-form`。用户要求完成 SpringBok
+连接、资源、配置和执行全流程，本项只添加 `.sba/deployment.json` 公开表单及测试。
+由应用拥有字段定义，不在平台写死 NAccount 配置。对应 SpringBok declaration v1，
+manifest v2 保持不变。表单从固定 GitHub SHA 读取，只有字段声明，没有可执行表达式。
+
+新实例须选择专用的已有 D1/KV、填写两个不同 HTTPS 自定义域名和 Worker 名称。
+Cloudflare 账号及 D1 名称/ID、KV ID 由平台资源登记注入；管理员客户端 ID 留空，
+由应用实际数据库读取，不猜测。默认 Cloudflare 邮件，需要填写已验证发信地址。
+表单不接受 Resend 等其他供应商 secret；使用旧 CLI 的相应配置不受影响。
+不添加 R2，因为本应用不消费它。不给现有生产资源预填默认值，避免误操作。
+
+本项不部署 NAccount、不修改现有 D1/KV/Worker/密钥，不重新执行首次部署、不改变
+旧 unknown 回执。新增表单不构成应用升级；已有实例不能通过该首次部署表单更新。
+
+验证：标准 unittest 52/52，通过 SpringBok 实际 deploymentDeclaration 跨仓库校验；
+没有云凭据或云写入，证据 `linshi/naccount-dc-03-b-20261007/`。
+
 ## SBA-05-S08：Windows 无 RTK 的构建入口修复（2026-10-07）
 
 负责人主 AI；基线 `661eb3505f573bb55cae63c57e2a10952b454bac`。真实 SpringBok
