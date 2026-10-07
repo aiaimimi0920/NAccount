@@ -126,3 +126,6 @@ OIDC/JWKS 与后台 HTTP 就绪，不冒充注册、邮件和数据保留的完�
   `state=built`、`cloudWrites=false`。这只是本地构建检查，不是 GitHub 正式部署。
 - 待本子项合并后，从新的 GitHub 固定 SHA 重建；后续由云端 SpringBok 发起
   GitHub runner 执行实际发布。邮件送达、注册、登录和后台授权仍待 SBA-05 验收。
+
+DC-04 对接补充：声明 targets 明确两个 Worker 与两个域名，使平台能够持久占用目标，
+阻止切换环境标识后把同一目标再当首次部署。仅表单元数据，不改执行脚本。

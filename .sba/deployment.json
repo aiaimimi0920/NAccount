@@ -22,6 +22,12 @@
     {"path": ["admin", "url"], "label": "管理后台 HTTPS 自定义域名（须不同）", "type": "text", "required": true},
     {"path": ["vars"], "label": "公开变量 JSON（须填写已验证的 Cloudflare 发信地址）", "type": "json", "required": true}
   ],
+  "targets": [
+    {"kind": "worker", "path": ["server", "name"]},
+    {"kind": "domain", "path": ["server", "url"]},
+    {"kind": "worker", "path": ["admin", "name"]},
+    {"kind": "domain", "path": ["admin", "url"]}
+  ],
   "resources": [
     {"key": "database", "label": "专用于新实例的 D1 数据库", "kind": "d1", "idPath": ["database", "id"], "namePath": ["database", "name"]},
     {"key": "session", "label": "专用于新实例的 KV namespace", "kind": "kv", "idPath": ["kvId"], "namePath": null}

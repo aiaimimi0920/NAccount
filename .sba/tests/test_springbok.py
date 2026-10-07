@@ -23,6 +23,7 @@ class SpringBokTests(unittest.TestCase):
         self.assertEqual(declaration['target'], 'cloudflare-workers')
         self.assertEqual(declaration['accountPath'], ['accountId'])
         self.assertEqual([r['kind'] for r in declaration['resources']], ['d1', 'kv'])
+        self.assertEqual([t['kind'] for t in declaration['targets']], ['worker', 'domain', 'worker', 'domain'])
         settings = copy.deepcopy(declaration['defaults'])
         def assign(path, value):
             row = settings
