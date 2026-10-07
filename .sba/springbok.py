@@ -13,6 +13,10 @@ from urllib.request import urlopen
 import cloudflare as deploy
 from stack import ROOT, Stack, StackError, atomic_json, clean, git, read_json, scratch, write_json
 
+ERROR_CODES = {stage: f'NACCOUNT_{stage.upper().replace("-", "_")}_FAILED' for stage in (
+    'request', 'configuration', 'credentials', 'upstream', 'server-build', 'keys',
+    'server-publish', 'admin-config', 'admin-build', 'admin-publish', 'readiness')}
+
 
 def validated_request(value: dict, root: Path) -> dict:
     manifest = read_json(root / '.sba/manifest.json')
@@ -122,36 +126,48 @@ def readiness(settings: dict) -> list[dict]:
     return checks
 
 
-def execute(value: dict, root: Path = ROOT) -> tuple[str, list]:
+def execute(value: dict, root: Path = ROOT, *, on_stage=lambda _stage, _writes: None) -> tuple[str, list]:
+    on_stage('request', False)
     request = validated_request(value, root)
+    on_stage('configuration', False)
     staging = scratch('naccount-sba-')
     config_path = staging / 'deployment.json'
     write_json(config_path, request['configuration'])
     settings = deploy.config(config_path, 'server')
     if request['action'] == 'verify':
+        on_stage('readiness', False)
         return 'succeeded', readiness(settings)
+    on_stage('credentials', False)
     if os.environ.get('SBA_EXECUTE') != '1':
         raise StackError('Explicit SBA_EXECUTE=1 required')
     if any(not os.environ.get(name) for name in ['CLOUDFLARE_API_TOKEN', *settings['server'].get('secretNames', [])]):
         raise StackError('Missing deployment credentials; no cloud writes attempted')
     # 重建锁定版本；不拉浮动上游，不触碰开发者原始 checkout。
+    on_stage('upstream', False)
     Stack(root).initialize()
+    on_stage('server-build', False)
     server = deploy.build(root, settings, 'server')
     if request['action'] == 'deploy':
+        on_stage('keys', True)
         deploy.bootstrap_keys(server)
     # 迁移、备份和幂等均属于应用；平台只知道 update/deploy 动作。
+    on_stage('server-publish', True)
     deploy.publish(server, migrate=True)
+    on_stage('admin-config', True)
     settings, secret = configure_admin(settings)
+    on_stage('admin-build', True)
     admin = deploy.build(root, settings, 'admin')
     previous_secret = os.environ.get('SERVER_CLIENT_SECRET')
     try:
         os.environ['SERVER_CLIENT_SECRET'] = secret
+        on_stage('admin-publish', True)
         deploy.publish(admin, migrate=False)
     finally:
         if previous_secret is None:
             os.environ.pop('SERVER_CLIENT_SECRET', None)
         else:
             os.environ['SERVER_CLIENT_SECRET'] = previous_secret
+    on_stage('readiness', True)
     return 'deployed-unverified', readiness(settings)
 
 
@@ -162,14 +178,21 @@ def main() -> int:
     args = parser.parse_args()
     request = read_json(args.request)
     result = {key: request.get(key) for key in ('schemaVersion', 'taskId', 'action', 'sourceSha', 'applicationVersion')}
+    progress = {'stage': 'unconfirmed', 'writes': None}
+    def on_stage(stage, writes):
+        if stage not in ERROR_CODES or not isinstance(writes, bool) or (progress['writes'] is True and not writes):
+            raise StackError('Invalid execution progress')
+        progress.update(stage=stage, writes=writes)
     try:
-        status, checks = execute(request)
+        status, checks = execute(request, on_stage=on_stage)
         result.update(status=status, checks=checks)
         code = 0
     except Exception:
         # 不输出原始异常：API、子进程或输入可能包含凭据。外部副作用不确定时不重试。
-        result.update(status='unknown' if os.environ.get('SBA_EXECUTE') == '1' and request.get('action') in ('deploy', 'update') else 'failed',
-                      checks=[], errorCode='NACCOUNT_EXECUTION_FAILED')
+        possible_writes = progress['writes'] is not False
+        result.update(status='unknown' if possible_writes and os.environ.get('SBA_EXECUTE') == '1' and request.get('action') in ('deploy', 'update') else 'failed',
+                      checks=[] if possible_writes else [{'id': 'cloud-writes-not-started', 'passed': True}],
+                      errorCode=ERROR_CODES.get(progress['stage'], 'NACCOUNT_EXECUTION_FAILED'))
         print('NACCOUNT_EXECUTION_FAILED; preserve the runner diagnostics and do not replay cloud writes', file=sys.stderr)
         code = 1
     atomic_json(args.result, result)

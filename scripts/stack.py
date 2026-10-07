@@ -71,6 +71,10 @@ def run(args: list[str], cwd: Path, *, check: bool = True, data: bytes | None = 
     command = [str(arg) for arg in args]
     if shutil.which("rtk"):
         command = ["rtk", "proxy", *command]
+    else:
+        # Windows CreateProcess 不会为裸 npm 按 PATHEXT 解析 npm.cmd；使用 PATH 的精确结果。
+        path = env.get("PATH", env.get("Path")) if env is not None else None
+        command[0] = shutil.which(command[0], path=path) or command[0]
     result = subprocess.run(command, cwd=cwd, input=data, stdout=subprocess.PIPE,
                             stderr=subprocess.PIPE, env=env, check=False)
     if check and result.returncode:

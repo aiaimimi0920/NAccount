@@ -5,9 +5,39 @@ from pathlib import Path
 import shutil
 import sys
 import unittest
+from unittest.mock import patch
+import subprocess
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 from stack import Stack, StackError, encode_json, git, read_json, run, scratch, tree, write_json
+import stack
+
+
+class CommandTests(unittest.TestCase):
+    def test_without_rtk_resolves_batch_entry_from_command_environment(self):
+        completed = subprocess.CompletedProcess([], 0, b"ok", b"")
+        with patch.object(stack.shutil, "which", side_effect=[None, "C:/node/npm.cmd"]) as which, \
+                patch.object(stack.subprocess, "run", return_value=completed) as child:
+            self.assertIs(run(["npm", "run", "type:check"], Path.cwd(), env={"PATH": "C:/node"}), completed)
+        self.assertEqual(which.call_args_list[1].kwargs, {"path": "C:/node"})
+        self.assertEqual(child.call_args.args[0], ["C:/node/npm.cmd", "run", "type:check"])
+        self.assertNotIn("shell", child.call_args.kwargs)
+
+    def test_rtk_remains_optional_and_preserves_proxy_arguments(self):
+        completed = subprocess.CompletedProcess([], 0, b"", b"")
+        with patch.object(stack.shutil, "which", return_value="C:/tools/rtk.exe"), \
+                patch.object(stack.subprocess, "run", return_value=completed) as child:
+            run(["npm", "ci", "--no-audit"], Path.cwd())
+        self.assertEqual(child.call_args.args[0], ["rtk", "proxy", "npm", "ci", "--no-audit"])
+
+    @unittest.skipUnless(os.name == "nt", "Windows batch entry regression")
+    def test_real_windows_npm_version_without_rtk(self):
+        original = shutil.which
+        if not original("npm"):
+            self.skipTest("Node/npm not installed")
+        with patch.object(stack.shutil, "which", side_effect=lambda name, **kwargs: None if name == "rtk" else original(name, **kwargs)):
+            result = run(["npm", "--version"], scratch("naccount-npm-smoke-"))
+        self.assertRegex(result.stdout.decode("utf-8").strip(), r"^\d+\.\d+\.\d+$")
 
 
 class StackTests(unittest.TestCase):

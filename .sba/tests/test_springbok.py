@@ -118,6 +118,38 @@ class SpringBokTests(unittest.TestCase):
         self.assertEqual(result['sourceSha'], self.request['sourceSha'])
         self.assertNotIn('private-test-value', str(result) + logs.getvalue())
 
+    def test_build_failure_reports_fixed_prewrite_stage_and_never_calls_cloud(self):
+        request_path, result_path = self.temp / 'request.json', self.temp / 'result.json'
+        write_json(request_path, self.request)
+        with patch.object(sys, 'argv', ['springbok.py', '--request', str(request_path), '--result', str(result_path)]), \
+                patch.dict(os.environ, {'SBA_EXECUTE': '1', 'CLOUDFLARE_API_TOKEN': 'test-only'}), \
+                patch.object(sba, 'validated_request', return_value=self.request), patch.object(sba, 'Stack'), \
+                patch.object(sba.deploy, 'build', side_effect=OSError('private-test-value')), \
+                patch.object(sba.deploy, 'bootstrap_keys') as keys, patch.object(sba.deploy, 'publish') as publish, \
+                redirect_stderr(io.StringIO()) as logs:
+            self.assertEqual(sba.main(), 1)
+        result = read_json(result_path)
+        self.assertEqual(result['status'], 'failed')
+        self.assertEqual(result['errorCode'], 'NACCOUNT_SERVER_BUILD_FAILED')
+        self.assertEqual(result['checks'], [{'id': 'cloud-writes-not-started', 'passed': True}])
+        keys.assert_not_called(); publish.assert_not_called()
+        self.assertNotIn('private-test-value', str(result) + logs.getvalue())
+
+    def test_first_possible_cloud_write_failure_stays_unknown(self):
+        request_path, result_path = self.temp / 'request.json', self.temp / 'result.json'
+        write_json(request_path, self.request)
+        with patch.object(sys, 'argv', ['springbok.py', '--request', str(request_path), '--result', str(result_path)]), \
+                patch.dict(os.environ, {'SBA_EXECUTE': '1', 'CLOUDFLARE_API_TOKEN': 'test-only'}), \
+                patch.object(sba, 'validated_request', return_value=self.request), patch.object(sba, 'Stack'), \
+                patch.object(sba.deploy, 'build', return_value='server'), \
+                patch.object(sba.deploy, 'bootstrap_keys', side_effect=OSError('private-test-value')) as keys, \
+                patch.object(sba.deploy, 'publish') as publish, redirect_stderr(io.StringIO()) as logs:
+            self.assertEqual(sba.main(), 1)
+        result = read_json(result_path)
+        self.assertEqual(result['status'], 'unknown'); self.assertEqual(result['errorCode'], 'NACCOUNT_KEYS_FAILED')
+        self.assertEqual(result['checks'], []); self.assertEqual(keys.call_count, 1); publish.assert_not_called()
+        self.assertNotIn('private-test-value', str(result) + logs.getvalue())
+
 
 if __name__ == '__main__':
     unittest.main()
