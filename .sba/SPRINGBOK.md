@@ -1,5 +1,26 @@
 # SpringBok 联合部署接入
 
+## NACCOUNT-SBA-V3-S01：自动资源与预升级生命周期（实现与本地验证完成）
+
+2026-10-08，负责人主 AI，基线 `06fdb8b99e5941a6b899bdc76991beedefc5087a`，
+分支 `feat/sba-v3-lifecycle`。用户批准适配 SBA v3，并允许删除无保留要求的测试实例后
+重新部署；具体删除清单仍按环境规则等待明确“同意”。不要求旧协议兼容。
+范围：manifest v3 / declaration v2、deploy/update/verify/preview/destroy-preview，
+应用自有快照、迁移与副作用隔离、精确清单清理及相关测试；固定 GitHub 版本后由
+SpringBok 云端执行，不把本地发布当作云执行验收。源账户数据不上传公共日志或制品。
+证据：`linshi/naccount-sba-v3-20261008/`。无真实验收前不称部署完成；不修改上游锁定版本。
+
+最终标准 unittest 65/65、上游补丁锁校验、diff-check、actionlint 与 Gitleaks 通过。
+SpringBok main `d9b18ef066b767880ab81d691ec01ff4da63ad6e` 的实际 manifest/declaration、
+automaticConfiguration、previewInventory、request/result 合同及应用 context 校验通过。
+无凭据双端 npm ci、typecheck、build、Wrangler dry-run 通过；最终 bundle 在本地 workerd
+运行隔离探针，两端均拦截外发、出站计数为零。Windows 绝对 scriptPath 加载曾报运行器
+internal error；传入同一 bundle 原文后通过，未修改 bundle。不能据此宣称线上业务验收。
+已补新建/preview 的 Worker 和域名占用预检及构建期间工具摘要漂移拒绝；预检不是供应商
+原子 create-only，仍要求执行窗口无外部同名资源写入。源码交付的精确 PR/main 回执另记。
+下一停点：正常 PR 审阅、CI、合并与 main 复核；取得具体删除“同意”和有效 SpringBok
+管理授权后，再由云端固定版本执行 NAccount 重建及业务验收，不重放旧 unknown 任务。
+
 ## DC-03-B：自助部署表单声明（2026-10-07）
 
 主 AI；基线 `f0bba49`，分支 `feat/dc-03-b-deployment-form`。用户要求完成 SpringBok

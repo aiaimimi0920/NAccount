@@ -19,7 +19,7 @@ from stack import StackError, read_json, scratch, write_json
 class SpringBokTests(unittest.TestCase):
     def test_deployment_form_matches_public_configuration_and_owns_no_credentials(self):
         declaration = read_json(sba.ROOT / '.sba/deployment.json')
-        self.assertEqual(declaration['schemaVersion'], 1)
+        self.assertEqual(declaration['schemaVersion'], 2)
         self.assertEqual(declaration['target'], 'cloudflare-workers')
         self.assertEqual(declaration['accountPath'], ['accountId'])
         self.assertEqual([r['kind'] for r in declaration['resources']], ['d1', 'kv'])
@@ -52,15 +52,18 @@ class SpringBokTests(unittest.TestCase):
             self.assertEqual(sba.validated_request(value, sba.ROOT)['configuration'], settings)
 
     def setUp(self):
+        unused = patch.object(sba.lifecycle, 'require_unused_workers')
+        unused.start()
+        self.addCleanup(unused.stop)
         self.temp = scratch('naccount-sba-test-')
         self.settings = {'accountId': '1' * 32, 'kvId': '2' * 32,
                          'database': {'name': 'naccount-test', 'id': '11111111-2222-3333-4444-555555555555'},
                          'server': {'name': 'naccount-auth', 'url': 'https://auth.example.com', 'secretNames': []},
                          'admin': {'name': 'naccount-admin', 'url': 'https://admin.example.com', 'spaClientId': '', 's2sClientId': ''},
                          'vars': {'SUPPORTED_LOCALES': ['en', 'zh']}}
-        self.request = {'schemaVersion': 2, 'taskId': 'sba-test-01', 'action': 'deploy',
+        self.request = {'schemaVersion': 3, 'taskId': 'sba-test-01', 'action': 'deploy',
                         'repository': 'aiaimimi0920/NAccount', 'sourceSha': 'a' * 40,
-                        'applicationId': 'naccount-cloudflare', 'applicationVersion': '1.0.0',
+                        'applicationId': 'naccount-cloudflare', 'applicationVersion': '3.0.0',
                         'environment': 'acceptance', 'configuration': self.settings, 'previous': None}
         self.rows = [{'id': 7, 'name': 'Admin Panel (SPA)', 'type': 'spa', 'clientId': 'spa-real',
                       'secret': 'unused', 'redirectUris': 'https://existing.example.com/callback'},
@@ -122,20 +125,23 @@ class SpringBokTests(unittest.TestCase):
             calls.append((release, migrate))
         with patch.object(sba, 'validated_request', return_value=self.request), \
                 patch.dict(os.environ, {'SBA_EXECUTE': '1', 'CLOUDFLARE_API_TOKEN': 'test-only', 'SERVER_CLIENT_SECRET': 'prior-value'}), \
-                patch.object(sba, 'Stack') as stack, patch.object(sba.deploy, 'build', side_effect=['server-release', 'admin-release']), \
+                patch.object(sba, 'Stack') as stack, patch.object(sba.deploy, 'build', side_effect=[Path('server-release'), Path('admin-release')]), \
+                patch.object(sba.lifecycle, 'export_snapshot', return_value={'createdAt': 1, 'witness': {}}), \
+                patch.object(sba.deploy, 'cloud_api', return_value={'bookmark': 'test-bookmark'}), patch.object(sba.deploy, 'wrangler'), \
+                patch.object(sba.lifecycle, 'prove_rows'), \
                 patch.object(sba.deploy, 'bootstrap_keys') as bootstrap, patch.object(sba.deploy, 'publish', side_effect=publish), \
                 patch.object(sba, 'configure_admin', return_value=(self.settings, 'private-test-value')), \
                 patch.object(sba, 'readiness', return_value=[]):
-            status, _ = sba.execute(self.request)
+            status, _, _ = sba.execute(self.request)
             bootstrap.assert_not_called()
             stack.return_value.initialize.assert_called_once()
             self.assertEqual(os.environ['SERVER_CLIENT_SECRET'], 'prior-value')
-        self.assertEqual(calls, [('server-release', True), ('admin-release', False)])
+        self.assertEqual(calls, [(Path('server-release'), False), (Path('admin-release'), False)])
         self.assertEqual(status, 'deployed-unverified')
 
     def test_server_failure_stops_before_admin_and_does_not_replay(self):
         with patch.object(sba, 'validated_request', return_value=self.request), patch.dict(os.environ, {'SBA_EXECUTE': '1', 'CLOUDFLARE_API_TOKEN': 'test-only'}), \
-                patch.object(sba, 'Stack'), patch.object(sba.deploy, 'build', return_value='server'), \
+                patch.object(sba, 'Stack'), patch.object(sba.deploy, 'build', return_value=Path('server')), patch.object(sba.deploy, 'wrangler'), \
                 patch.object(sba.deploy, 'bootstrap_keys'), patch.object(sba.deploy, 'publish', side_effect=StackError('failed')) as publish, \
                 patch.object(sba, 'configure_admin') as admin:
             with self.assertRaises(StackError):

@@ -180,10 +180,10 @@ class DeploymentTests(unittest.TestCase):
     def test_manifest_owns_actions_and_entrypoint(self):
         folder = Path(deploy.__file__).resolve().parent
         manifest = json.loads((folder / "manifest.json").read_text(encoding="utf-8"))
-        self.assertEqual(manifest["schemaVersion"], 2)
+        self.assertEqual(manifest["schemaVersion"], 3)
         self.assertEqual(manifest["entrypoint"], "springbok.ps1")
         self.assertTrue((folder / manifest["entrypoint"]).is_file())
-        self.assertEqual(set(manifest["actions"]), {"deploy", "update", "verify"})
+        self.assertEqual(set(manifest["actions"]), {"deploy", "update", "verify", "preview", "destroy-preview"})
         self.assertTrue((folder / 'deploy.ps1').is_file())
         self.assertEqual(manifest['runtime']['runner'], 'windows-2025')
 
@@ -193,7 +193,7 @@ class DeploymentTests(unittest.TestCase):
         payload.write_text("export default {}\n", encoding="utf-8")
         write_json(self.temp / "deployment.json", self.settings)
         receipt = {"state": "built", "component": "all", "files": deploy.inventory(self.temp),
-                   "deploymentScriptSha256": deploy.sha(Path(deploy.__file__).read_bytes()),
+                   "deploymentScriptSha256": deploy.deployment_tools_hash(),
                    "stackScriptSha256": deploy.sha((deploy.ROOT / "scripts/stack.py").read_bytes())}
         write_json(self.temp / "release.json", receipt)
         return payload
@@ -216,6 +216,15 @@ class DeploymentTests(unittest.TestCase):
         write_json(self.temp / "release.json", receipt)
         with self.assertRaisesRegex(StackError, "tools changed"):
             deploy.checked_release(self.temp)
+
+    def test_changed_tools_during_build_leave_release_unbuilt(self):
+        write_json(self.temp / "release.json", {"state": "prepared", "deploymentScriptSha256": "0" * 64,
+                   "stackScriptSha256": deploy.sha((deploy.ROOT / "scripts/stack.py").read_bytes())})
+        with patch.object(deploy, "prepare", return_value=self.temp), \
+                patch.object(deploy, "app_command"), patch.object(deploy, "wrangler"), \
+                self.assertRaisesRegex(StackError, "tools changed during build"):
+            deploy.build(deploy.ROOT, self.settings, "server")
+        self.assertEqual(read_json(self.temp / "release.json")["state"], "prepared")
 
     def test_missing_runtime_secret_stops_before_cloud_reads_or_writes(self):
         self.settings["server"]["secretNames"] = ["RESEND_API_KEY"]

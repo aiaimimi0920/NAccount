@@ -1,14 +1,16 @@
 {
-  "schemaVersion": 2,
+  "schemaVersion": 3,
   "id": "naccount-cloudflare",
   "name": "NAccount Cloudflare deployment",
-  "version": "1.0.0",
+  "version": "3.0.0",
   "entrypoint": "springbok.ps1",
   "runtime": { "runner": "windows-2025", "powershell": "5.1", "python": "3.12", "node": "22" },
   "actions": {
     "deploy": { "timeoutSeconds": 3600 },
     "update": { "timeoutSeconds": 3600 },
-    "verify": { "timeoutSeconds": 120 }
+    "verify": { "timeoutSeconds": 120 },
+    "preview": { "timeoutSeconds": 3600 },
+    "destroy-preview": { "timeoutSeconds": 300 }
   },
   "secrets": ["CLOUDFLARE_API_TOKEN"]
 }

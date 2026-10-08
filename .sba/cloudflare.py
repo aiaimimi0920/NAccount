@@ -25,6 +25,11 @@ KEY_NAMES = {"sessionSecret", "jwtPublicSecret", "jwtPrivateSecret"}
 EXCLUDED = {"node_modules", ".git", ".next", ".wrangler", "__pycache__"}
 
 
+def deployment_tools_hash():
+    folder = Path(__file__).parent
+    return sha(b'\0'.join((folder / name).read_bytes() for name in ('cloudflare.py', 'lifecycle.py', 'springbok.py')))
+
+
 def config(path: Path, component: str) -> dict:
     result = read_json(path)
     if not re.fullmatch(r"[0-9a-f]{32}", result["accountId"]):
@@ -41,9 +46,11 @@ def config(path: Path, component: str) -> dict:
         parsed = urlparse(result[role]["url"])
         if (parsed.scheme != "https" or not parsed.hostname or parsed.path not in ("", "/")
                 or parsed.query or parsed.fragment or parsed.username or parsed.password or parsed.port
-                or parsed.hostname.endswith(".workers.dev")
                 or not re.fullmatch(r"[a-z0-9.-]+\.[a-z]{2,}", parsed.hostname)):
-            raise StackError("Use two HTTPS custom-domain origins without ports, paths or credentials")
+            raise StackError("Use two HTTPS origins without ports, paths or credentials")
+        if parsed.hostname.endswith('.workers.dev') and not re.fullmatch(
+                re.escape(result[role]['name']) + r'\.[a-z0-9-]+\.workers\.dev', parsed.hostname):
+            raise StackError('workers.dev origin must match its Worker name')
         hosts.append(parsed.hostname)
         result[role]["url"] = f"https://{parsed.hostname}"
     if len(set(hosts)) != 2 or result["server"]["name"] == result["admin"]["name"]:
@@ -86,7 +93,7 @@ def server_config(source: Path, settings: dict) -> dict:
     if settings.get('vars', {}).get('EMAIL_PROVIDER_NAME') == 'cloudflare':
         upstream['send_email'] = [{'name': 'CLOUDFLARE_EMAIL',
                                    'allowed_sender_addresses': [settings['vars']['CLOUDFLARE_SENDER_ADDRESS']]}]
-    return upstream
+    return runtime_config(upstream, settings, 'server')
 
 
 def admin_config(source: Path, settings: dict) -> dict:
@@ -95,7 +102,21 @@ def admin_config(source: Path, settings: dict) -> dict:
                      "workers_dev": False, "preview_urls": False,
                      "routes": [{"pattern": urlparse(settings["admin"]["url"]).hostname, "custom_domain": True}],
                      "vars": admin_env(settings)})
-    return upstream
+    return runtime_config(upstream, settings, 'admin')
+
+
+def runtime_config(value: dict, settings: dict, role: str) -> dict:
+    if urlparse(settings[role]['url']).hostname.endswith('.workers.dev'):
+        value.update(workers_dev=True, routes=[])
+    value['compatibility_flags'] = sorted(set(value.get('compatibility_flags', [])) | {'global_fetch_strictly_public'})
+    if settings.get('_sbaPreview'):
+        # 预升级配置不继承任何邮件、定时、队列或外部服务通道。
+        for key in ('send_email', 'triggers', 'queues', 'services', 'unsafe', 'durable_objects'):
+            value.pop(key, None)
+        original = value['main']
+        value['main'] = 'naccount-preview-entry.mjs'
+        value['_previewOriginalMain'] = original
+    return value
 
 
 def admin_env(settings: dict) -> dict[str, str]:
@@ -123,6 +144,13 @@ def prepare(root: Path, settings: dict, component: str) -> Path:
         archive.extractall(source, filter="data")
     generated = {"server": server_config(source, settings), "admin-panel": admin_config(source, settings)}
     for role, value in generated.items():
+        original_main = value.pop('_previewOriginalMain', None)
+        if original_main:
+            from lifecycle import preview_entry, preview_guard
+            (source / role / 'naccount-preview-entry.mjs').write_text(
+                preview_entry(original_main, settings, role), encoding='utf-8')
+            (source / role / 'naccount-preview-guard.mjs').write_text(
+                preview_guard(settings, role), encoding='utf-8')
         # Only the isolated build copy is changed; original checkout remains untouched.
         original = source / role / "wrangler.toml"
         original.rename(original.with_name("wrangler.upstream.toml"))
@@ -131,7 +159,7 @@ def prepare(root: Path, settings: dict, component: str) -> Path:
     write_json(release / "release.json", {"schemaVersion": 1, "state": "prepared", "component": component,
                "sourceHead": lock["head"], "sourceTree": lock["tree"],
                "catalogGeneration": read_json(stack.catalog / "current.json")["generation"],
-               "deploymentScriptSha256": sha(Path(__file__).read_bytes()),
+               "deploymentScriptSha256": deployment_tools_hash(),
                "stackScriptSha256": sha((ROOT / "scripts/stack.py").read_bytes())})
     return release
 
@@ -194,6 +222,8 @@ def build(root: Path, settings: dict, component: str) -> Path:
         app_command(source, role, ["npm", "run", "cf:build" if role == "admin-panel" else "build"], settings)
         wrangler(source, role, ["deploy", "--dry-run", "--outdir", str(release / "dry-run" / role)], settings)
     receipt = read_json(release / "release.json")
+    if receipt["deploymentScriptSha256"] != deployment_tools_hash() or receipt["stackScriptSha256"] != sha((ROOT / "scripts/stack.py").read_bytes()):
+        raise StackError("Deployment tools changed during build; rebuild before publishing")
     receipt.update({"state": "built", "files": inventory(release)})
     write_json(release / "release.json", receipt)
     return release
@@ -204,7 +234,7 @@ def checked_release(release: Path) -> tuple[dict, dict]:
     receipt = read_json(release / "release.json")
     if receipt.get("state") != "built":
         raise StackError("Release did not pass install, typecheck, build and Wrangler dry-run")
-    if receipt["deploymentScriptSha256"] != sha(Path(__file__).read_bytes()) or receipt["stackScriptSha256"] != sha((ROOT / "scripts/stack.py").read_bytes()):
+    if receipt["deploymentScriptSha256"] != deployment_tools_hash() or receipt["stackScriptSha256"] != sha((ROOT / "scripts/stack.py").read_bytes()):
         raise StackError("Deployment tools changed since build; rebuild before publishing")
     if receipt["files"] != inventory(release):
         raise StackError("Release payload or configuration changed since build")
