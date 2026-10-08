@@ -1,9 +1,10 @@
 # Cloudflare 部署与更新
 
-> 2026-10-06：`manifest.json` 已显式升级为 SpringBok SBA v2；统一程序入口为
+> 2026-10-08：`manifest.json` 升级为 SpringBok SBA v3，资源声明为 v2；统一程序入口为
 > `springbok.ps1 -RequestPath ... -ResultPath ...`，见 [联合接入](SPRINGBOK.md)。
 > 下文 `deploy.ps1` 的人工/旧 CLI 用法继续保留，但末节 v1 JSON stdout 协议只适用于
-> 直接调用旧 CLI，不再描述 manifest v2 的文件结果协议。实际云端联合验收仍待完成。
+> 直接调用 CLI，不再描述 manifest v3 的文件结果协议。新增生命周期与验收边界见
+> [v3 生命周期](V3.md)。以下人工 CLI 的历史资源准备方式不代表 SpringBok 自动新建流程。
 
 本目录是 NAccount 的唯一部署入口：`deploy.ps1` 是用户、AI 和 SpringBok 的共同调用点，`manifest.json` 是机器可读的动作清单，`AGENTS.md` 是操作规则。本目录把“本地准备/构建”与“外部写入”分开。部署不会隐式拉取最新上游、提交代码、创建 D1/KV 或轮换 JWT 密钥。提供调用协议不代表 SpringBok 已完成端到端接入。迁移后的本地检查见 [验证记录](VALIDATION.md)。
 
