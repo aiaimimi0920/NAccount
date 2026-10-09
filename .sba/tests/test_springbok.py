@@ -101,6 +101,33 @@ class SpringBokTests(unittest.TestCase):
                 sba.execute(self.request)
             build.assert_not_called()
 
+    def test_bootstrap_password_is_not_a_runtime_secret(self):
+        value=copy.deepcopy(self.settings);value['server']['secretNames']=['ADMIN_BOOTSTRAP_PASSWORD']
+        with self.assertRaises(StackError):
+            sba.public_settings(value,read_json(sba.ROOT / '.sba/manifest.json'))
+
+    def test_first_admin_initializes_before_publish_and_password_never_reaches_build(self):
+        self.settings['admin']['bootstrapEmail']='fixture@gmail.com'
+        events=[]
+        def build(*args):
+            self.assertNotIn('ADMIN_BOOTSTRAP_PASSWORD',os.environ)
+            events.append('build');return Path('release')
+        def publish(*args,**kwargs):
+            self.assertNotIn('ADMIN_BOOTSTRAP_PASSWORD',os.environ);events.append('publish')
+        def initialize(*args):
+            events.append('administrator');return {'id':'administrator-initialized','passed':True}
+        with patch.object(sba,'validated_request',return_value=self.request), \
+                patch.dict(os.environ,{'SBA_EXECUTE':'1','CLOUDFLARE_API_TOKEN':'test-only','ADMIN_BOOTSTRAP_PASSWORD':'Synthetic-Only!42'}), \
+                patch.object(sba,'Stack'),patch.object(sba.deploy,'build',side_effect=build), \
+                patch.object(sba.deploy,'wrangler'),patch.object(sba.deploy,'bootstrap_keys'),patch.object(sba.deploy,'publish',side_effect=publish), \
+                patch.object(sba.admin_bootstrap,'material',return_value={'hash':'synthetic','otp':'synthetic'}) as material, \
+                patch.object(sba.admin_bootstrap,'initialize',side_effect=initialize), \
+                patch.object(sba,'configure_admin',return_value=(self.settings,'test-s2s')),patch.object(sba,'readiness',return_value=[]):
+            status,checks,_=sba.execute(self.request)
+            material.assert_called_once_with(Path('release'),'Synthetic-Only!42')
+        self.assertEqual(status,'deployed-unverified');self.assertEqual(events,['build','administrator','publish','build','publish'])
+        self.assertIn({'id':'administrator-initialized','passed':True},checks)
+
     def test_admin_clients_are_read_from_database_and_callbacks_preserved(self):
         new = 'https://existing.example.com/callback,https://admin.example.com/en/dashboard,https://admin.example.com/zh/dashboard'
         with patch.object(sba, 'database_query', side_effect=[self.rows, [], [{'redirectUris': new}]]) as query:

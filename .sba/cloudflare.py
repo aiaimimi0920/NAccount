@@ -27,7 +27,7 @@ EXCLUDED = {"node_modules", ".git", ".next", ".wrangler", "__pycache__"}
 
 def deployment_tools_hash():
     folder = Path(__file__).parent
-    return sha(b'\0'.join((folder / name).read_bytes() for name in ('cloudflare.py', 'lifecycle.py', 'springbok.py')))
+    return sha(b'\0'.join((folder / name).read_bytes() for name in ('cloudflare.py', 'lifecycle.py', 'springbok.py', 'admin_bootstrap.py', 'admin_bootstrap.mjs')))
 
 
 def config(path: Path, component: str) -> dict:
@@ -167,6 +167,7 @@ def prepare(root: Path, settings: dict, component: str) -> Path:
 def app_command(source: Path, role: str, command: list[str], settings: dict,
                 *, secret_input: bytes | None = None, cloud: bool = False) -> bytes:
     env = os.environ.copy()
+    env.pop('ADMIN_BOOTSTRAP_PASSWORD', None)
     env.update({"CI": "true", "WRANGLER_SEND_METRICS": "false", "NEXT_TELEMETRY_DISABLED": "1",
                 "CLOUDFLARE_ACCOUNT_ID": settings["accountId"]})
     # Keep dependency caches and logs with isolated artifacts, not the user's global cache.

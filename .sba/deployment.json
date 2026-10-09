@@ -4,6 +4,7 @@
   "accounts": [{"key": "runtime", "label": "账户", "path": ["accountId"], "secret": "CLOUDFLARE_API_TOKEN"}],
   "target": "cloudflare-workers",
   "accountPath": ["accountId"],
+  "administrator": {"emailPath": ["admin", "bootstrapEmail"], "secret": "ADMIN_BOOTSTRAP_PASSWORD"},
   "defaults": {
     "server": {"name": "", "url": "", "secretNames": []},
     "admin": {"name": "", "url": "", "spaClientId": "", "s2sClientId": ""},
