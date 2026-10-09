@@ -210,6 +210,7 @@ def isolated_settings(settings):
     result = copy.deepcopy(settings);result['_sbaPreview'] = True
     result['vars'].update({key: '' for key in ('GOOGLE_AUTH_CLIENT_ID', 'FACEBOOK_AUTH_CLIENT_ID', 'GITHUB_AUTH_CLIENT_ID', 'GITHUB_AUTH_APP_NAME', 'DISCORD_AUTH_CLIENT_ID', 'APPLE_AUTH_CLIENT_ID', 'COMPANY_LOGO_URL', 'COMPANY_EMAIL_LOGO_URL')})
     result['vars'].update(OIDC_AUTH_PROVIDERS=[], EMBEDDED_AUTH_ORIGINS=[], ENABLE_SAML_SP=False, ENABLE_SAML_SSO_AS_SP=False, EMAIL_PROVIDER_NAME='disabled-preview')
+    result['server']['secretNames'] = []
     return result
 
 

@@ -27,7 +27,7 @@ EXCLUDED = {"node_modules", ".git", ".next", ".wrangler", "__pycache__"}
 
 def deployment_tools_hash():
     folder = Path(__file__).parent
-    return sha(b'\0'.join((folder / name).read_bytes() for name in ('cloudflare.py', 'lifecycle.py', 'springbok.py', 'repair.py', 'diagnostics.py', 'admin_bootstrap.py', 'admin_bootstrap.mjs')))
+    return sha(b'\0'.join((folder / name).read_bytes() for name in ('cloudflare.py', 'lifecycle.py', 'springbok.py', 'repair.py', 'portal.py', 'diagnostics.py', 'admin_bootstrap.py', 'admin_bootstrap.mjs')))
 
 
 def config(path: Path, component: str) -> dict:
@@ -66,6 +66,9 @@ def config(path: Path, component: str) -> dict:
     for name in result["server"].get("secretNames", []):
         if not re.fullmatch(r"[A-Z][A-Z0-9_]*", name) or name.startswith("CLOUDFLARE_"):
             raise StackError("Invalid application secret name")
+    from portal import CLIENT_ID
+    if result.get('vars', {}).get('NACCOUNT_PORTAL_CLIENT_ID', CLIENT_ID) != CLIENT_ID:
+        raise StackError('Portal client identity is managed by NAccount migrations')
     if "secret" in result.get("admin", {}) or "secrets" in result:
         raise StackError("Do not store secret values in deployment configuration")
     if result.get('vars', {}).get('EMAIL_PROVIDER_NAME') == 'cloudflare':
@@ -89,6 +92,8 @@ def server_config(source: Path, settings: dict) -> dict:
     upstream["d1_databases"] = [{"binding": "DB", "database_name": settings["database"]["name"],
                                  "database_id": settings["database"]["id"], "migrations_dir": "./migrations/sqlite"}]
     upstream["vars"].update(settings.get("vars", {}))
+    from portal import CLIENT_ID
+    upstream['vars']['NACCOUNT_PORTAL_CLIENT_ID'] = CLIENT_ID
     upstream["vars"].update({"AUTH_SERVER_URL": settings["server"]["url"], "ENVIRONMENT": "prod"})
     if settings.get('vars', {}).get('EMAIL_PROVIDER_NAME') == 'cloudflare':
         upstream['send_email'] = [{'name': 'CLOUDFLARE_EMAIL',
@@ -178,7 +183,7 @@ def app_command(source: Path, role: str, command: list[str], settings: dict,
     if not cloud:
         # Local builds must not inherit cloud/application credentials.
         for key in list(env):
-            if key.startswith("CLOUDFLARE_") or key in settings["server"].get("secretNames", []) or key == "SERVER_CLIENT_SECRET":
+            if key.startswith("CLOUDFLARE_") or key in settings["server"].get("secretNames", []) or key in ('SERVER_CLIENT_SECRET', 'GOOGLE_AUTH_CLIENT_SECRET', 'GITHUB_AUTH_CLIENT_SECRET'):
                 env.pop(key, None)
     if role == "admin-panel":
         env.update(admin_env(settings))
@@ -320,6 +325,14 @@ def publish(release: Path, *, migrate: bool) -> dict:
             wrangler(source, "server", ["d1", "migrations", "apply", "DB", "--remote"], settings, cloud=True)
             steps.append("database-migrations")
         for role in roles:
+            if role == 'server':
+                from portal import configure
+                def query(config, sql, params):
+                    response = cloud_api(config, f"/d1/database/{config['database']['id']}/query", method='POST', payload={'sql': sql, 'params': params})
+                    if not isinstance(response, list) or len(response) != 1 or response[0].get('success') is not True:
+                        raise StackError('Portal D1 query failed')
+                    return response[0]['results']
+                configure(settings, query, preview=bool(settings.get('_sbaPreview')))
             # Upload application secrets only when explicitly listed. JWT/session keys are not touched.
             if secrets[role]:
                 wrangler(source, role, ["secret", "bulk"], settings, secret_input=encode_json(secrets[role]), cloud=True)

@@ -115,13 +115,15 @@ class DeploymentTests(unittest.TestCase):
     def test_publish_backs_up_then_migrates_without_key_generation(self):
         with patch.object(deploy, "checked_release", return_value=(self.settings, {"component": "server"})), \
                 patch.object(deploy, "existing_keys", return_value=deploy.KEY_NAMES), \
-                patch.object(deploy, "wrangler") as cli, patch.object(deploy, "bootstrap_keys") as keys:
+                patch.object(deploy, "wrangler") as cli, patch.object(deploy, "bootstrap_keys") as keys, \
+                patch('portal.configure') as portal_config:
             deploy.publish(self.temp, migrate=True)
             commands = [call.args[2] for call in cli.call_args_list]
             self.assertEqual(commands[0][:2], ["d1", "export"])
             self.assertEqual(commands[1][:3], ["d1", "migrations", "apply"])
             self.assertEqual(commands[2], ["deploy"])
             keys.assert_not_called()
+            portal_config.assert_called_once()
 
     def test_failed_migration_stops_before_deploy(self):
         with patch.object(deploy, "checked_release", return_value=(self.settings, {"component": "server"})), \

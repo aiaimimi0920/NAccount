@@ -144,7 +144,13 @@ class LifecycleTests(unittest.TestCase):
             return [{'success':True,'results':[dict(row) for row in db.execute(payload['sql'],payload['params'])]}]
         def wrangler(_source,_role,args,*_args,**_kwargs):
             if args[1]=='execute':target_db.executescript(path.read_text())
-            elif args[1]=='migrations':target_db.execute('ALTER TABLE user ADD COLUMN migrated INTEGER DEFAULT 1')
+            elif args[1]=='migrations':
+                target_db.executescript("""ALTER TABLE user ADD COLUMN migrated INTEGER DEFAULT 1;
+                INSERT INTO app VALUES(4,'NAccount User Portal (SPA)','spa',1,NULL,'naccount-user-portal','','');
+                CREATE TABLE scope(id INTEGER PRIMARY KEY,name TEXT,type TEXT,deletedAt TEXT);
+                INSERT INTO scope VALUES(1,'openid','spa',NULL),(2,'profile','spa',NULL),(3,'offline_access','spa',NULL);
+                CREATE TABLE app_scope(appId INTEGER,scopeId INTEGER,deletedAt TEXT);
+                INSERT INTO app_scope VALUES(4,1,NULL),(4,2,NULL),(4,3,NULL);""")
             else:raise AssertionError(args)
         def publish(_release,**_):
             self.assertEqual(target_db.execute('SELECT isActive FROM app WHERE id=3').fetchone()[0],0)
@@ -163,6 +169,7 @@ class LifecycleTests(unittest.TestCase):
             self.assertEqual(target_db.execute('SELECT email FROM user').fetchone()[0],'retained@example.invalid')
             self.assertEqual({c['id'] for c in checks},{'snapshot-copied','migration-verified','source-unchanged','side-effects-isolated'})
             self.assertEqual(result['snapshot']['id'],'f'*64)
+            self.assertEqual(target_db.execute('SELECT redirectUris,isActive FROM app WHERE id=4').fetchone()[:], (self.settings['server']['url']+'/account',1))
         finally:source_db.close();target_db.close()
 
     def test_preview_settings_remove_external_login_and_embedded_origins(self):
@@ -172,6 +179,8 @@ class LifecycleTests(unittest.TestCase):
         self.assertEqual(isolated['vars']['OIDC_AUTH_PROVIDERS'],[])
         self.assertEqual(isolated['vars']['EMBEDDED_AUTH_ORIGINS'],[])
         self.assertEqual(settings['vars']['DISCORD_AUTH_CLIENT_ID'],'live')
+        settings['server']['secretNames']=['GITHUB_AUTH_CLIENT_SECRET']
+        self.assertEqual(life.isolated_settings(settings)['server']['secretNames'],[])
 
     def test_live_isolation_probe_rejects_wrong_origin_allowlist(self):
         bad={'kind':'naccount-preview-v3','egressBlocked':True,'allowedOrigins':['https://production.example.invalid']}
