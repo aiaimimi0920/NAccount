@@ -26,8 +26,8 @@ class LifecycleTests(unittest.TestCase):
             'server': {'name': self.environment+'-auth', 'url': 'https://'+self.environment+'-auth.demo.workers.dev', 'secretNames': []},
             'admin': {'name': self.environment+'-admin', 'url': 'https://'+self.environment+'-admin.demo.workers.dev', 'spaClientId': '', 's2sClientId': ''}, 'vars': {'SUPPORTED_LOCALES': ['en', 'zh']}}
         self.request = {'schemaVersion': 3, 'taskId': 'dc-'+'3'*32, 'action': 'destroy-preview', 'repository': 'aiaimimi0920/NAccount', 'sourceSha': 'a'*40,
-            'applicationId': 'naccount-cloudflare', 'applicationVersion': '3.0.0', 'environment': self.environment, 'configuration': self.settings,
-            'previous': {'sourceSha': 'a'*40, 'applicationVersion': '3.0.0'}, 'context': {'instanceId': 'dc-'+'4'*32, 'previewTaskId': 'dc-'+'4'*32, 'resultDigest': 'b'*64,
+            'applicationId': 'naccount-cloudflare', 'applicationVersion': json.loads((sba.ROOT / '.sba/manifest.json').read_text(encoding='utf-8'))['version'], 'environment': self.environment, 'configuration': self.settings,
+            'previous': {'sourceSha': 'a'*40, 'applicationVersion': json.loads((sba.ROOT / '.sba/manifest.json').read_text(encoding='utf-8'))['version']}, 'context': {'instanceId': 'dc-'+'4'*32, 'previewTaskId': 'dc-'+'4'*32, 'resultDigest': 'b'*64,
             'resources': [{'key': key, 'kind': kind, 'accountId': account, 'remoteId': remote, 'name': key} for key, kind, account, remote in sorted(life.inventory(self.settings))]}}
 
     def test_v3_request_binds_exact_test_inventory_and_rejects_production_cleanup(self):
