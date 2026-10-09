@@ -80,7 +80,14 @@ https://accounts-admin.example.com/en/dashboard,https://accounts-admin.example.c
 .\.sba\deploy.ps1 publish --release '本次 admin Release 绝对路径' --execute
 ```
 
-首次管理员需注册、验证邮箱，核对真实用户行和 `super_admin` 角色行后再授权。**不要机械执行 `userId=1, roleId=1` 的示例 SQL**，以免授予错误账号权限；授权后退出并重新登录。参考锁定源码的 `melody-auth/docs/zh/admin-panel-setup.md`。
+SpringBok 3.0.2 部署可选择关联 Gmail 管理员资料：仅首次 `deploy` 使用公开的
+`admin.bootstrapEmail` 与一次性 `ADMIN_BOOTSTRAP_PASSWORD` 创建新用户并授予实际
+`super_admin` 角色。密码通过隔离 helper 的 stdin生成 bcrypt cost12，不进入构建环境、
+Worker secret、配置或回执。同邮箱已存在（含软删除）时拒绝，绝不重设密码或提权旧用户。
+邮箱和MFA不自动标为已验证；仍按正常登录流程完成验证。两次D1 REST写入非事务，
+部分写入停为unknown，不重试。update/preview/verify/destroy-preview不初始化管理员。
+未选择初始化资料时，沿用手动注册、验证邮箱、核对真实用户和角色后授权的流程。
+**不要机械执行 `userId=1, roleId=1` 的示例 SQL**。参考锁定源码的 `melody-auth/docs/zh/admin-panel-setup.md`。
 
 ## 5. 日常更新
 

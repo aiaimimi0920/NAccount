@@ -2,7 +2,7 @@
   "schemaVersion": 3,
   "id": "naccount-cloudflare",
   "name": "NAccount Cloudflare deployment",
-  "version": "3.0.1",
+  "version": "3.0.2",
   "entrypoint": "springbok.ps1",
   "runtime": { "runner": "windows-2025", "powershell": "5.1", "python": "3.12", "node": "22" },
   "actions": {
@@ -12,5 +12,5 @@
     "preview": { "timeoutSeconds": 3600 },
     "destroy-preview": { "timeoutSeconds": 300 }
   },
-  "secrets": ["CLOUDFLARE_API_TOKEN"]
+  "secrets": ["CLOUDFLARE_API_TOKEN", "ADMIN_BOOTSTRAP_PASSWORD"]
 }

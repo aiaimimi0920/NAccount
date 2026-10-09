@@ -1,5 +1,17 @@
 # 初始工程落地范围
 
+## NA-07-S02：首次管理员自动初始化（2026-10-09）
+
+负责人主 AI，分支 `feat/na-07-admin-bootstrap`。3.0.2 声明可选 Gmail 管理员邮箱和
+deployment-only 密码；默认/覆盖密码由 SpringBok 加密管理，经一次性 permit 提供。
+仅 deploy 创建不存在的新邮箱用户，以随机 authId 精确关联真实 super_admin 角色。
+密码在执行入口移出环境，隔离 helper 用锁定 bcryptjs cost12及20字节OTP材料；
+不进入 npm/Next/Wrangler、Worker secret、公开配置或回执。update/preview均不重设密码。
+同邮箱碰撞拒绝，邮箱/MFA仍需正常验证。两次D1写入非事务；部分失败为unknown，不重放。
+已通过完整46迁移SQLite初始化聚焦检查与真实锁定依赖helper；标准测试、PR/main和真实部署另验。
+标准测试73/73通过、补丁栈verify通过；源码只读审阅未发现安全阻断。补齐构建环境不含密码、
+初始化先于发布及runtime secret拒绝检查。真实子域名与新管理员登录随SpringBok发布后另验。
+
 ## NA-07-S01：后台无限加载修复（2026-10-09）
 
 负责人主 AI，分支 `fix/na-07-admin-loading`。用户已授权开发两仓库的部署体验改进。

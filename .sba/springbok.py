@@ -12,12 +12,13 @@ from urllib.request import Request, urlopen
 
 import cloudflare as deploy
 import lifecycle
+import admin_bootstrap
 from stack import ROOT, Stack, StackError, atomic_json, clean, git, read_json, scratch, write_json
 
 ERROR_CODES = {stage: f'NACCOUNT_{stage.upper().replace("-", "_")}_FAILED' for stage in (
     'request', 'configuration', 'credentials', 'upstream', 'server-build', 'keys',
     'server-publish', 'admin-config', 'admin-build', 'admin-publish', 'readiness',
-    'snapshot', 'copy', 'preservation', 'isolation', 'cleanup')}
+    'snapshot', 'copy', 'preservation', 'isolation', 'cleanup', 'admin-bootstrap')}
 
 
 def validated_request(value: dict, root: Path) -> dict:
@@ -75,10 +76,14 @@ def public_settings(settings, manifest):
         raise StackError('Unexpected public configuration fields')
     for key, allowed in [('database', {'name', 'id'}), ('server', {'name', 'url', 'secretNames'}),
                          ('admin', {'name', 'url', 'spaClientId', 's2sClientId'})]:
+        if key == 'admin' and isinstance(settings[key], dict) and 'bootstrapEmail' in settings[key]:
+            allowed = allowed | {'bootstrapEmail'}
+            if not isinstance(settings[key]['bootstrapEmail'], str) or not re.fullmatch(r'[a-z0-9][a-z0-9._%+\-]{0,63}@gmail\.com', settings[key]['bootstrapEmail']):
+                raise StackError('Invalid administrator email')
         if not isinstance(settings[key], dict) or set(settings[key]) != allowed:
             raise StackError('Unexpected public configuration fields')
     if not isinstance(settings['server']['secretNames'], list) or any(
-            name not in manifest['secrets'] for name in settings['server']['secretNames']):
+            name not in manifest['secrets'] or name == 'ADMIN_BOOTSTRAP_PASSWORD' for name in settings['server']['secretNames']):
         raise StackError('Undeclared runtime secret')
 
 
@@ -140,6 +145,7 @@ def readiness(settings: dict) -> list[dict]:
 
 
 def execute(value: dict, root: Path = ROOT, *, on_stage=lambda _stage, _writes: None) -> tuple[str, list, dict | None]:
+    bootstrap_password = os.environ.pop('ADMIN_BOOTSTRAP_PASSWORD', None)
     on_stage('request', False)
     request = validated_request(value, root)
     on_stage('configuration', False)
@@ -150,6 +156,11 @@ def execute(value: dict, root: Path = ROOT, *, on_stage=lambda _stage, _writes: 
     if request['action'] == 'verify':
         on_stage('readiness', False)
         return 'succeeded', readiness(settings), None
+    bootstrap = request['action'] == 'deploy' and bool(settings['admin'].get('bootstrapEmail'))
+    if bootstrap:
+        admin_bootstrap.validate(settings['admin']['bootstrapEmail'], bootstrap_password)
+    else:
+        bootstrap_password = None
     on_stage('credentials', False)
     if os.environ.get('SBA_EXECUTE') != '1':
         raise StackError('Explicit SBA_EXECUTE=1 required')
@@ -165,6 +176,8 @@ def execute(value: dict, root: Path = ROOT, *, on_stage=lambda _stage, _writes: 
     Stack(root).initialize()
     on_stage('server-build', False)
     server = deploy.build(root, settings, 'server')
+    generated = admin_bootstrap.material(server, bootstrap_password) if bootstrap else None
+    bootstrap_password = None
     if request['action'] in ('deploy', 'preview'):
         on_stage('configuration', False)
         lifecycle.require_unused_workers(settings)
@@ -203,6 +216,10 @@ def execute(value: dict, root: Path = ROOT, *, on_stage=lambda _stage, _writes: 
     if preview:
         on_stage('isolation', True)
         lifecycle.isolate_apps(settings)
+    if bootstrap:
+        on_stage('admin-bootstrap', True)
+        checks.append(admin_bootstrap.initialize(settings, generated, database_query))
+        generated = None
     deploy.publish(server, migrate=False)
     on_stage('admin-config', True)
     settings, secret = configure_admin(settings)
