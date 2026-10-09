@@ -1,6 +1,17 @@
 # 初始工程落地范围
 
-## NA-09-S01：普通用户入口与个人中心（源码已验证，部署集成待完成）
+## NA-09-S02/S03/S04：社交绑定、统一身份与部署集成（本地实现与验证完成，未发布）
+
+负责人主 AI。仅本地开发、验证、提交与导出；无推送/云写授权。
+Google/GitHub 使用独立的一次性绑定事务，登录账号确认密码后发起第三方授权；回调同时校验
+随机 state、浏览器绑定、PKCE/nonce 和原账号仍有效。社交身份唯一归属，禁止邮箱合并。
+已绑定登录解析回原 user/authId；数据库约束覆盖并发绑定与独立社交注册冲突。
+部署集成负责独立 portal SPA client、provider 公开参数与 preview 隔离，保留 admin-only repair 边界。
+SpringBok 当前没有 optional provider secret 合同，不能在 manifest 中擅加必填秘密；真实启用需单独配置认证 Worker secrets，或使用 standalone CLI 的 secretNames。配置清单、验证证据与限制见 [USER_CENTER.md](USER_CENTER.md)。
+主仓库标准测试 100/100、部署子套件 84/84、门户/社交及既有 provider 回归 221/221、既有认证扩展回归 181/181 通过，TypeScript 与客户端/Worker 构建通过。浏览器验证普通用户登录、资料编辑入口与 provider 未配置状态；真实第三方授权、邮件、PG 运行及云发布未验证。
+下一步仅为发布准备与外部 OAuth 配置、实际授权验收；没有用历史授权执行云写入。
+
+## NA-09-S01：普通用户入口与个人中心（首阶段历史记录；部署集成见上）
 
 负责人主 AI。边界、社交绑定后续验收与配置见 [USER_CENTER.md](USER_CENTER.md)。
 本轮先接入独立普通用户门户与现有认证策略，禁止放宽管理员后台权限。

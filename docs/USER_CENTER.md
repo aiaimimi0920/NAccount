@@ -1,6 +1,6 @@
 # NA-09：普通用户入口、个人中心与社交身份绑定
 
-负责人：主 AI。状态：开发中，未发布、未进行云端写入。
+负责人：主 AI。状态：普通用户门户、Google/GitHub 自助绑定与部署集成本地实现完成，未发布、未进行云端写入。
 
 ## 验收边界
 
@@ -38,9 +38,53 @@ Gmail 管理员资料不等于 Google OAuth 应用；未完成第三方应用配
 - `npm run build`：客户端与 Worker 构建通过。后续仅新增测试，产品源码未变化。
 - 使用 SHA-256 相同的 server/package-lock.json 对应既有依赖缓存；不是 fresh npm install、依赖安全扫描或完整应用测试。
 
-未完成：SBA 自动创建/维护独立 portal client、Google/GitHub 绑定与统一身份登录、浏览器真实 OAuth/邮件验收、云端发布。界面不展示未实现的社交绑定按钮，不改变既有管理员后台和权限。
+本阶段当时未完成的 SBA client、社交绑定与统一身份登录，已由下述 S02/S03/S04 实现；此处 107/95 项与旧提交/generation 保留为 S01 历史证据，不代替当前版本证据。
 
 用户已明确允许本地定制提交与补丁导出；此授权不包括 GitHub 推送或真实部署。SpringBok 本轮无代码及 SBA 合同改动，因此其 ai-docs/pages 无协议同步改动；后续变更部署合同需要重新评估。
 
 已创建定制提交 `2774512cf4eb50bd0a51120e5d896dab425cd2ee`，带 `NAccount-Patch-Topic: user-portal`。
 `naccount.ps1 export` 与 `verify` 均通过；新 generation 为 `d88c6ec5846ec3eb31b978dc6560ff0a22b8c724e1cf7d7647a1bddcf8a31ebb`，补丁栈共 3 项，既有 generation 未删除。
+
+## NA-09-S02/S03/S04 本地交付（2026-10-09）
+
+- 个人中心提供 Google/GitHub 状态、绑定与解绑。需要活动本地账号、已验证邮箱与当前密码；复用登录失败锁定机制。不支持无密码的原生社交账号自助绑定管理，不伪装成所有账号都支持。
+- 绑定事务有效期五分钟，包含一次性 state、浏览器 HttpOnly/Secure cookie 绑定、PKCE 和 Google nonce；D1 原子消费后才换取 provider 身份。验证期间账号停用、删除、密码变化或 client 停用均拒绝。
+- Google 校验签名、issuer、aud/azp、nonce、sub、时间与已验证邮箱；GitHub 使用 provider 数字 ID，不依据邮箱归并。provider token 不持久化。
+- 社交登录先解析绑定表，返回原账号 authId、邮箱和角色；不创建第二账号、不转移管理员权限。停用/已删除 owner 不会回退注册。
+- 数据库同时防止绑定与原生社交身份冲突，包含已删除身份；解绑保留密码和原生主身份。SQLite 0047 新唯一索引遇到历史重复主体会失败关闭，发布前必须备份并检查，不自动合并或选赢家。
+- 绑定写入仅支持 Cloudflare D1；PG 附带身份读取表迁移，但本轮未运行 PG 实例，不能宣称 PG 绑定支持。
+- SQLite 0048 创建固定公开 client `naccount-user-portal`，仅授予 openid/profile/offline_access。SBA 3.1.0 在认证发布前配置精确 `/account` 回调，正常部署不会偷偷恢复已停用 client；preview 仅恢复隔离副本并改为 preview 回调，清除生产 secretNames。admin-only repair 不执行本配置写入或迁移。
+
+### 验证
+
+隔离源码与运行产物：`linshi/naccount-user-center-20261009/`。
+
+- 主仓库 `python -m unittest discover -s tests -v`：100/100 通过（含部署子套件 84 项，不重复累加）。
+- 门户/社交聚焦及既有 provider Vitest：221/221（包括先前 146 项，不重复累加）；Google proof 使用本地真实 RSA 签名，外部 provider HTTP 是 mock。
+- OAuth、JWT、identity-main 注册/密码登录/退出等扩展回归：181/181。
+- TypeScript、客户端与 Worker 构建通过。依赖使用相同 lockfile 的既有缓存，不是新安装或依赖漏洞审计。
+- 本地真实浏览器：注册入口进入注册页；合成普通用户完成密码登录及 PKCE 回调，显示资料、打开修改资料 policy，Google/GitHub 未配置按钮禁用；退出后回到登录/注册入口。注册提交由后端回归覆盖，不等于浏览器注册或真实邮件验证。
+- 未验：真实 Google/GitHub 授权往返、真实邮箱投递、PG 运行、线上升级和最终用户验收。
+
+### OAuth 配置
+
+Gmail 管理员资源不提供 OAuth client。需要在两个平台分别创建应用；当前认证域名对应配置如下（仅为未来发布说明，本轮未写云）：
+
+| 平台 | 公开 Worker vars | Worker secret | 精确 callback |
+| --- | --- | --- | --- |
+| Google | `GOOGLE_AUTH_CLIENT_ID` | `GOOGLE_AUTH_CLIENT_SECRET` | `https://naccount-auth.aiaimimi.com/account/social/google/callback` |
+| GitHub | `GITHUB_AUTH_CLIENT_ID`、`GITHUB_AUTH_APP_NAME` | `GITHUB_AUTH_CLIENT_SECRET` | `https://naccount-auth.aiaimimi.com/identity/v1/authorize-github` |
+
+Google 同时配置 JavaScript origin `https://naccount-auth.aiaimimi.com`，用于既有 GIS 登录；绑定采用服务端 code exchange。preview 需要独立的 OAuth 应用配置，不复用生产秘密。
+
+SpringBok 当前只接收声明中的 Cloudflare/管理员初始化 secrets，没有通用 optional OAuth secret 输入/传递合同。本轮保持平台合同不变：公开参数放部署 vars，秘密由管理员单独配置到认证 Worker，或使用 standalone `.sba/deploy.ps1` 的 `server.secretNames` 和受控进程环境。不得把 secret 放公开 vars、JSON、日志或仓库，也不得为绕过平台校验擅加 manifest secret。实际部署后必须再验证秘密配置与真实授权。
+
+官方协议核实：2026-10-09 获取 Google OpenID Connect 与 GitHub OAuth Apps 授权文档，确认 code exchange、精确 redirect_uri 与 GitHub S256 PKCE 支持。单元测试不代替这些应用在真实平台上的注册与启用。
+
+### 本地补丁交付
+
+定制源码提交：`eaa8557390f6ba6d54e5a7cda27b27c1593e17a7`，trailer `NAccount-Patch-Topic: user-portal`。
+`naccount.ps1 export`、`verify` 均通过，当前 generation：
+`32c8c23027721a42d483795e2e87967c3f0f8ab673818beaf41c52be8750a33b`，补丁栈共 4 项。
+退出后再次密码登录已在本地浏览器验证；截图 `linshi/naccount-user-center-20261009/portal-local.jpg` 使用合成测试账号，无线上用户数据。
+未推送 GitHub、未发布 3.1.0、未创建/修改 OAuth 应用或 Cloudflare 资源。

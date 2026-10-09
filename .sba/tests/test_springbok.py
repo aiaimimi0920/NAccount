@@ -13,6 +13,7 @@ from urllib.request import Request
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import springbok as sba
+import portal
 from stack import StackError, read_json, scratch, write_json
 
 
@@ -52,6 +53,9 @@ class SpringBokTests(unittest.TestCase):
             self.assertEqual(sba.validated_request(value, sba.ROOT)['configuration'], settings)
 
     def setUp(self):
+        configured = patch.object(portal, 'configure')
+        self.portal_configuration = configured.start()
+        self.addCleanup(configured.stop)
         unused = patch.object(sba.lifecycle, 'require_unused_workers')
         unused.start()
         self.addCleanup(unused.stop)

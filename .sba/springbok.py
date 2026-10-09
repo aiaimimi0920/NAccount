@@ -176,13 +176,13 @@ def execute(value: dict, root: Path = ROOT, *, on_stage=lambda _stage, _writes: 
         raise StackError('Explicit SBA_EXECUTE=1 required')
     if request['action'] == 'repair':
         return repair.execute(request, settings, root, on_stage, configure_admin, readiness)
+    preview = request['action'] == 'preview'
+    if preview:
+        settings = lifecycle.isolated_settings(settings)
     if any(not os.environ.get(name) for name in ['CLOUDFLARE_API_TOKEN', *settings['server'].get('secretNames', [])]):
         raise StackError('Missing deployment credentials; no cloud writes attempted')
     if request['action'] == 'destroy-preview':
         return 'succeeded', [{'id': 'owned-resources-removed', 'passed': True}], lifecycle.destroy_preview(request, on_stage)
-    preview = request['action'] == 'preview'
-    if preview:
-        settings = lifecycle.isolated_settings(settings)
     # 重建锁定版本；不拉浮动上游，不触碰开发者原始 checkout。
     on_stage('upstream', False)
     Stack(root).initialize()
@@ -228,6 +228,8 @@ def execute(value: dict, root: Path = ROOT, *, on_stage=lambda _stage, _writes: 
     if preview:
         on_stage('isolation', True)
         lifecycle.isolate_apps(settings)
+    import portal
+    portal.configure(settings, database_query, preview=preview)
     if bootstrap:
         on_stage('admin-bootstrap', True)
         checks.append(admin_bootstrap.initialize(settings, generated, database_query))

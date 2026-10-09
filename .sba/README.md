@@ -1,5 +1,13 @@
 # Cloudflare 部署与更新
 
+## 3.1.0 普通用户门户与社交绑定
+
+认证服务 `/account` 为普通用户入口，不依赖管理员域名。迁移 0048 创建独立公开 SPA client `naccount-user-portal`；发布认证服务前自动校验三项普通用户 scope 并配置精确 `server.url/account`。配置覆盖该 client ID 会被拒绝，正常部署不会恢复已停用 client。迁移 0047 增加社交身份唯一归属；历史 Google/GitHub 重复主体会使迁移失败，必须提前备份并检查，不能自动合并。
+
+Google/GitHub 自助绑定要求当前密码和已验证邮箱，只支持 D1 写入。provider public vars、secret 名称、回调与验收清单见 [普通用户中心](../docs/USER_CENTER.md#oauth-配置)。SpringBok 没有通用 optional provider secret 合同，manifest 保持现有两项 secrets，不把 OAuth secrets 当作公开参数。需另行配置认证 Worker secrets，或通过 standalone CLI 的 `server.secretNames` 从受控环境上传。真实启用和上线需要独立授权与验证。
+
+preview 清除生产 secretNames 并单独配置副本 portal 回调，不复制生产 provider 秘密；未配置时界面显示未配置并禁用绑定。admin-only repair 仍不迁移、不改认证数据库、不重新发布认证服务。
+
 ## 3.0.3 后台专用修复
 
 SpringBok 正式 `repair/admin-publish` 仅接受已验证的 `NACCOUNT_ADMIN_PUBLISH_FAILED`
