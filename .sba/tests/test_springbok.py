@@ -63,7 +63,7 @@ class SpringBokTests(unittest.TestCase):
                          'vars': {'SUPPORTED_LOCALES': ['en', 'zh']}}
         self.request = {'schemaVersion': 3, 'taskId': 'sba-test-01', 'action': 'deploy',
                         'repository': 'aiaimimi0920/NAccount', 'sourceSha': 'a' * 40,
-                        'applicationId': 'naccount-cloudflare', 'applicationVersion': '3.0.0',
+                        'applicationId': 'naccount-cloudflare', 'applicationVersion': json.loads((sba.ROOT / '.sba/manifest.json').read_text(encoding='utf-8'))['version'],
                         'environment': 'acceptance', 'configuration': self.settings, 'previous': None}
         self.rows = [{'id': 7, 'name': 'Admin Panel (SPA)', 'type': 'spa', 'clientId': 'spa-real',
                       'secret': 'unused', 'redirectUris': 'https://existing.example.com/callback'},
