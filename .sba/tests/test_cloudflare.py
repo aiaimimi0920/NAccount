@@ -90,6 +90,7 @@ class DeploymentTests(unittest.TestCase):
             with patch.object(deploy, "run") as command:
                 command.return_value.stdout = b""
                 command.return_value.stderr = b""
+                command.return_value.returncode = 0
                 deploy.app_command(self.temp, "server", ["npm", "run", "build"], self.settings)
                 env = command.call_args.kwargs["env"]
                 for name in ("CLOUDFLARE_API_TOKEN", "SERVER_CLIENT_SECRET", "RESEND_API_KEY"):
@@ -183,7 +184,7 @@ class DeploymentTests(unittest.TestCase):
         self.assertEqual(manifest["schemaVersion"], 3)
         self.assertEqual(manifest["entrypoint"], "springbok.ps1")
         self.assertTrue((folder / manifest["entrypoint"]).is_file())
-        self.assertEqual(set(manifest["actions"]), {"deploy", "update", "verify", "preview", "destroy-preview"})
+        self.assertEqual(set(manifest["actions"]), {"deploy", "update", "verify", "preview", "destroy-preview", "repair"})
         self.assertTrue((folder / 'deploy.ps1').is_file())
         self.assertEqual(manifest['runtime']['runner'], 'windows-2025')
 

@@ -70,6 +70,45 @@ class SpringBokTests(unittest.TestCase):
                      {'id': 9, 'name': 'Admin Panel (S2S)', 'type': 's2s', 'clientId': 's2s-real',
                       'secret': 'private-test-value', 'redirectUris': ''}]
 
+    def test_repair_admin_configuration_reads_existing_clients_without_writes(self):
+        rows = copy.deepcopy(self.rows)
+        for row in rows:
+            row['isActive'] = 1
+        rows[0]['redirectUris'] = ','.join(self.settings['admin']['url'] + '/' + locale + '/dashboard'
+                                        for locale in self.settings['vars']['SUPPORTED_LOCALES'])
+        before = copy.deepcopy(self.settings)
+        with patch.object(sba, 'database_query', return_value=rows) as query:
+            settings, secret = sba.configure_admin(self.settings, read_only=True)
+        self.assertEqual(settings['admin']['spaClientId'], 'spa-real')
+        self.assertEqual(settings['admin']['s2sClientId'], 's2s-real')
+        self.assertEqual(secret, 'private-test-value')
+        self.assertEqual(self.settings, before)
+        self.assertEqual(query.call_count, 1)
+        self.assertTrue(query.call_args.args[1].startswith('SELECT '))
+
+    def test_repair_admin_configuration_refuses_missing_callbacks_and_client_drift(self):
+        rows = copy.deepcopy(self.rows)
+        for row in rows:
+            row['isActive'] = 1
+        good = ','.join(self.settings['admin']['url'] + '/' + locale + '/dashboard'
+                        for locale in self.settings['vars']['SUPPORTED_LOCALES'])
+        for change in ('callback', 'inactive', 'identity', 'empty-id', 'secret', 'duplicate'):
+            with self.subTest(change=change):
+                candidate = copy.deepcopy(rows)
+                settings = copy.deepcopy(self.settings)
+                candidate[0]['redirectUris'] = good
+                if change == 'callback': candidate[0]['redirectUris'] = ''
+                if change == 'inactive': candidate[1]['isActive'] = 0
+                if change == 'identity': settings['admin']['s2sClientId'] = 'wrong-client'
+                if change == 'empty-id': candidate[0]['clientId'] = ''
+                if change == 'secret': candidate[1]['secret'] = ''
+                if change == 'duplicate': candidate.append(copy.deepcopy(candidate[0]))
+                with patch.object(sba, 'database_query', return_value=candidate) as query:
+                    with self.assertRaises(StackError):
+                        sba.configure_admin(settings, read_only=True)
+                self.assertEqual(query.call_count, 1)
+                self.assertTrue(query.call_args.args[1].startswith('SELECT '))
+
     def test_exact_checkout_and_application_identity(self):
         with patch.object(sba, 'clean'), patch.object(sba, 'git', return_value='a' * 40):
             value = sba.validated_request(self.request, sba.ROOT)

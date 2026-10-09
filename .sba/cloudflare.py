@@ -27,7 +27,7 @@ EXCLUDED = {"node_modules", ".git", ".next", ".wrangler", "__pycache__"}
 
 def deployment_tools_hash():
     folder = Path(__file__).parent
-    return sha(b'\0'.join((folder / name).read_bytes() for name in ('cloudflare.py', 'lifecycle.py', 'springbok.py', 'admin_bootstrap.py', 'admin_bootstrap.mjs')))
+    return sha(b'\0'.join((folder / name).read_bytes() for name in ('cloudflare.py', 'lifecycle.py', 'springbok.py', 'repair.py', 'diagnostics.py', 'admin_bootstrap.py', 'admin_bootstrap.mjs')))
 
 
 def config(path: Path, component: str) -> dict:
@@ -183,9 +183,13 @@ def app_command(source: Path, role: str, command: list[str], settings: dict,
     if role == "admin-panel":
         env.update(admin_env(settings))
     print(f"[{role}] {' '.join(command)}", flush=True)
-    result = run(command, source / role, env=env, data=secret_input, check=secret_input is None)
-    if secret_input is not None and result.returncode:
-        raise StackError("Secret upload failed; output suppressed to avoid exposing secret values")
+    from diagnostics import command_failure, command_operation, DeploymentCommandError
+    try:
+        result = run(command, source / role, env=env, data=secret_input, check=False)
+    except OSError:
+        raise DeploymentCommandError(command_operation(command), 'SPAWN_FAILED') from None
+    if result.returncode:
+        raise command_failure(command, result.stdout, result.stderr, secret_input=secret_input is not None) from None
     if result.stdout and secret_input is None:
         print(result.stdout.decode("utf-8", errors="replace"), flush=True)
     if result.stderr and secret_input is None:

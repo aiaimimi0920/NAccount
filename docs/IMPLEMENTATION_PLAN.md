@@ -1,5 +1,31 @@
 # 初始工程落地范围
 
+## NA-08-S01：仅补发后台的正式修复（2026-10-09）
+
+负责人主 AI。用户选择 SpringBok 控制台 repair，不通过本地 CLI 补发。
+拆出管理员客户端的只读检查：复用现有 SPA/S2S 身份与密钥，要求回调已经登记，
+不得借配置读取执行 UPDATE。已接入占位 Worker 前置检查、数据与认证配置保持证明、
+admin-only 构建发布和真实资源配置就绪检查。3.0.3新增repair声明，尚未发布或执行修复。
+只读客户端路径已实现；新增成功、回调缺失、停用、身份漂移、空ID/密钥及重复客户端
+回归，前轮标准 Python 测试 83/83 通过。本轮完整回归及精确PR另验。
+只读审阅指出内部表筛选LIKE下划线通配符范围过宽，已改为字面前缀GLOB并加相似名用户表
+覆盖；新增provider占位漂移、域名/绑定/vars/assets、认证变化、分页上限及不重放测试。
+配置就绪不等于后台登录验收；保持Access，秘密与行内容不上传artifact，不以HTTP登录页判成功。
+本轮标准套件94项通过，收尾增加repair unknown回执测试后的部署子套件79项通过；补丁栈verify
+通过。真实Cloudflare只读preflight及两次22表/三密钥/auth状态采样通过，未云写。证据在
+`linshi/springbok-rebuild-retry-20261009/repair-live-readonly-proof.json`。精确提交、PR及发布另验。
+
+## NA-07-S03：失败发布的安全诊断（2026-10-09）
+
+负责人主 AI。线上固定 3.0.2 的任务 `dc-082d9d6d909a46c6b41cd149e0de729d`
+在 admin-publish 阶段停止，认证服务、管理员与数据库已存在，后台只有 secret 占位 Worker。
+本子任务仅补充固定命令类别、Cloudflare 数字错误码或固定网络/启动失败类别，沿用 SBA
+既有 errorCode 字段，不上传原始 stdout/stderr、参数、异常、凭据或业务内容。不更改 unknown
+状态和恢复锁，不重放初始化，不以 Actions success 代替应用结果。安全恢复与线上发布另验。
+本地标准测试 81/81 通过，新增 8 项诊断/秘密隔离/不重试/unknown 与构建哈希围栏检查。
+只读审阅发现新诊断模块的哈希覆盖遗漏，已修正并完整复验。尚未提交、推送或部署；
+线上仍保留原 unknown。证据 `linshi/springbok-rebuild-retry-20261009/diagnostics-tests.log`。
+
 ## NA-07-S02：首次管理员自动初始化（2026-10-09）
 
 负责人主 AI，分支 `feat/na-07-admin-bootstrap`。3.0.2 声明可选 Gmail 管理员邮箱和

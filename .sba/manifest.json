@@ -2,7 +2,7 @@
   "schemaVersion": 3,
   "id": "naccount-cloudflare",
   "name": "NAccount Cloudflare deployment",
-  "version": "3.0.2",
+  "version": "3.0.3",
   "entrypoint": "springbok.ps1",
   "runtime": { "runner": "windows-2025", "powershell": "5.1", "python": "3.12", "node": "22" },
   "actions": {
@@ -10,7 +10,9 @@
     "update": { "timeoutSeconds": 3600 },
     "verify": { "timeoutSeconds": 120 },
     "preview": { "timeoutSeconds": 3600 },
-    "destroy-preview": { "timeoutSeconds": 300 }
+    "destroy-preview": { "timeoutSeconds": 300 },
+    "repair": { "timeoutSeconds": 3600 }
   },
+  "repairs": [{ "id": "admin-publish", "name": "仅补发后台", "fromErrorCodes": ["NACCOUNT_ADMIN_PUBLISH_FAILED"], "secretNames": ["CLOUDFLARE_API_TOKEN"] }],
   "secrets": ["CLOUDFLARE_API_TOKEN", "ADMIN_BOOTSTRAP_PASSWORD"]
 }

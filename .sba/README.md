@@ -1,5 +1,21 @@
 # Cloudflare 部署与更新
 
+## 3.0.3 后台专用修复
+
+SpringBok 正式 `repair/admin-publish` 仅接受已验证的 `NACCOUNT_ADMIN_PUBLISH_FAILED`
+父回执以及更高版本、不同固定 SHA。只允许已有 secret 占位后台、相同认证服务与资源；
+读取并复用现有 active SPA/S2S 配置，缺回调或身份漂移拒绝，不修改数据库、初始化账号、
+重设密码、轮换密钥、执行迁移或发布认证 Worker。仅向 runner 提供 Cloudflare token。
+
+后台构建后再次核对占位状态；发布前后比较用户表（含迁移表）/schema、三项KV关键材料、
+认证Worker当前部署版本/配置/域名。SQLite内部表不包含在用户数据证明内；并发业务写入
+可能使保全核验失败，失败保留unknown，不自动回滚或重试。秘密与行内容仅在内存处理，
+不写公开结果或备份artifact。
+
+`service-ready` 表示真实部署版本、compatibility、预期vars、ASSETS及自定义域名的
+**配置就绪**，并含认证OIDC/JWKS探针；不表示Access后面的后台页面或登录已人工验收。
+保留Access，不通过绕过保护或增加机器授权完成探针；最终后台登录沿正常用户流程另验。
+
 > 2026-10-08：`manifest.json` 升级为 SpringBok SBA v3，资源声明为 v2；统一程序入口为
 > `springbok.ps1 -RequestPath ... -ResultPath ...`，见 [联合接入](SPRINGBOK.md)。
 > 下文 `deploy.ps1` 的人工/旧 CLI 用法继续保留，但末节 v1 JSON stdout 协议只适用于
@@ -94,6 +110,13 @@ Worker secret、配置或回执。同邮箱已存在（含软删除）时拒绝�
 开发、提交定制（需授权）、`export`、`verify` 后重新 `build --component all`；审阅迁移，再显式 `publish`。只有决定吸收官方更新时才先运行 `.\naccount.ps1 update`，不是每次部署都升级。
 
 发布日志会记录 `started`、`failed` 或 `deployed-unverified` 以及已完成步骤。上传 secret 可能已生效，即使后续部署失败；不能把一次命令失败理解为云端完全没变化。回滚需核对当前版本、旧产物与数据库兼容性，不自动恢复备份或轮换密钥。
+
+SBA 的失败回执沿用 `errorCode`，部署子进程可进一步返回固定命令和错误类别，例如
+`NACCOUNT_ADMIN_PUBLISH_WRANGLER_DEPLOY_CF_10021`、`WRANGLER_DEPLOY_NETWORK`
+或 `WRANGLER_SECRET_EXIT_NONZERO` 后缀。CF 数字仅表示受限输出中出现唯一的 Wrangler
+`[code: N]`，不单独证明具体根因；未知格式安全降级为 `EXIT_NONZERO`。原始输出、异常、
+命令参数和秘密不进入回执，secret 上传输出完全不解析。固定诊断不改变 `unknown` 语义，
+不授权重跑，也不解除 SpringBok 的部署锁。
 
 ## 上线验收
 
