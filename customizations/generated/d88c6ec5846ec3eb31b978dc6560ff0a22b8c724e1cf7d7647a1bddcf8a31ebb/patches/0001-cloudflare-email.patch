@@ -1,0 +1,143 @@
+From 67c0882f81bb25cd2cfb8ff18dca25a83506b36f Mon Sep 17 00:00:00 2001
+From: aiaimimi0920 <153103332+aiaimimi0920@users.noreply.github.com>
+Date: Tue, 6 Oct 2026 03:39:05 -0700
+Subject: [PATCH] feat: add Cloudflare Email binding provider
+
+NAccount-Patch-Topic: cloudflare-email
+---
+ server/src/configs/type.ts                   |  4 +++
+ server/src/services/email.tsx                |  9 ++++++
+ server/src/services/email/cloudflare.test.ts | 34 ++++++++++++++++++++
+ server/src/services/email/cloudflare.ts      | 33 +++++++++++++++++++
+ 4 files changed, 80 insertions(+)
+ create mode 100644 server/src/services/email/cloudflare.test.ts
+ create mode 100644 server/src/services/email/cloudflare.ts
+
+diff --git a/server/src/configs/type.ts b/server/src/configs/type.ts
+index 9303c349a57f20ceed0516ec718779a4ecc049c3..3b92190e7ec3c5a2b09bd711693026c50d3f40cd 100644
+--- a/server/src/configs/type.ts
++++ b/server/src/configs/type.ts
+@@ -14,6 +14,10 @@ export type Bindings = {
+   DB: D1Database;
+   KV: KVNamespace;
+   SMTP: { init: () => Transporter<SentMessageInfo> };
++  CLOUDFLARE_EMAIL?: {
++    send: (message: { to: string; from: { email: string; name: string }; subject: string; html: string }) => Promise<{ messageId: string }>;
++  };
++  CLOUDFLARE_SENDER_ADDRESS?: string;
+   ENVIRONMENT: string;
+   DEV_EMAIL_RECEIVER: string;
+   DEV_SMS_RECEIVER: string;
+diff --git a/server/src/services/email.tsx b/server/src/services/email.tsx
+index d449fcb16d9b4402e35cc0ba693ea824465dfc74..a36252ec3b414ac01ae1c578f90a405bd72e708d 100644
+--- a/server/src/services/email.tsx
++++ b/server/src/services/email.tsx
+@@ -7,6 +7,7 @@ import { ResendMailer } from './email/resend'
+ import { SendgridMailer } from './email/sendgrid'
+ import { PostmarkMailer } from './email/postmark'
+ import { SmtpMailer } from './email/smtp'
++import { CloudflareMailer } from './email/cloudflare'
+ import {
+   cryptoUtil, loggerUtil,
+ } from 'utils'
+@@ -30,6 +31,12 @@ import {
+ import { systemConfig } from 'configs/variable'
+ 
+ const checkEmailSetup = (c: Context<typeConfig.Context>) => {
++  if (env(c).EMAIL_PROVIDER_NAME === 'cloudflare') {
++    if (!c.env.CLOUDFLARE_EMAIL || !env(c).CLOUDFLARE_SENDER_ADDRESS) {
++      throw new errorConfig.Forbidden(messageConfig.ConfigError.NoEmailSender)
++    }
++    return
++  }
+   const {
+     BREVO_API_KEY: brevoApiKey,
+     BREVO_SENDER_ADDRESS: brevoSender,
+@@ -64,6 +71,8 @@ const buildMailer = (context: Context<typeConfig.Context>): IMailer => {
+ 
+   const { EMAIL_PROVIDER_NAME: emailProviderName } = vars
+   switch (emailProviderName) {
++  case 'cloudflare':
++    return new CloudflareMailer({ context })
+   case 'smtp':
+     return new SmtpMailer({ context })
+   case 'sendgrid':
+diff --git a/server/src/services/email/cloudflare.test.ts b/server/src/services/email/cloudflare.test.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..b576ef9f5b56d7e954ae6a9737a89f78bc629f60
+--- /dev/null
++++ b/server/src/services/email/cloudflare.test.ts
+@@ -0,0 +1,34 @@
++import { Context } from 'hono'
++import { describe, expect, test, vi } from 'vitest'
++import { typeConfig } from '../../configs'
++import { CloudflareMailer } from './cloudflare'
++
++vi.mock('hono/adapter', () => ({ env: (value: { env: object }) => value.env }))
++
++const message = { email: 'recipient@example.com', senderName: 'NAccount', subject: 'Verify', content: '<p>test</p>' }
++const context = (bindings: object) => ({ env: bindings, runtime: 'workerd' }) as unknown as Context<typeConfig.Context>
++
++describe('Cloudflare Email binding', () => {
++  test('uses the binding and preserves message fields without API token', async () => {
++    const send = vi.fn().mockResolvedValue({ messageId: 'mail-123' })
++    const mailer = new CloudflareMailer({ context: context({ CLOUDFLARE_EMAIL: { send }, CLOUDFLARE_SENDER_ADDRESS: 'accounts@example.com' }) })
++    const response = await mailer.sendEmail(message)
++    expect(response.status).toBe(202)
++    expect(await response.json()).toEqual({ messageId: 'mail-123' })
++    expect(send).toHaveBeenCalledExactlyOnceWith({ to: message.email, from: { email: 'accounts@example.com', name: message.senderName }, subject: message.subject, html: message.content })
++  })
++
++  test('missing binding is a failure, not accepted email', async () => {
++    const response = await new CloudflareMailer({ context: context({}) }).sendEmail(message)
++    expect(response.ok).toBe(false)
++  })
++
++  test('unknown provider result and errors do not report success or disclose details', async () => {
++    for (const send of [vi.fn().mockResolvedValue({}), vi.fn().mockRejectedValue(new Error('private verification code'))]) {
++      const response = await new CloudflareMailer({ context: context({ CLOUDFLARE_EMAIL: { send }, CLOUDFLARE_SENDER_ADDRESS: 'accounts@example.com' }) }).sendEmail(message)
++      expect(response.status).toBe(502)
++      expect(await response.text()).not.toContain('private verification code')
++      expect(send).toHaveBeenCalledTimes(1)
++    }
++  })
++})
+diff --git a/server/src/services/email/cloudflare.ts b/server/src/services/email/cloudflare.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..b10da54b79e0c79ee3b2e2a013376da544007f98
+--- /dev/null
++++ b/server/src/services/email/cloudflare.ts
+@@ -0,0 +1,33 @@
++import { env } from 'hono/adapter'
++import {
++  IMailer, SendEmailOptions,
++} from './interface'
++
++// 由 Worker binding 发信，不向应用注入账户管理 API token。
++export class CloudflareMailer extends IMailer {
++  async sendEmail ({
++    email, subject, content, senderName,
++  }: SendEmailOptions) {
++    const binding = this.context.env.CLOUDFLARE_EMAIL
++    const sender = env(this.context).CLOUDFLARE_SENDER_ADDRESS
++    if (!binding || typeof sender !== 'string' || !sender) {
++      return Response.json({ error: 'CLOUDFLARE_EMAIL_NOT_CONFIGURED' }, { status: 503 })
++    }
++    try {
++      const result = await binding.send({
++        to: email,
++        from: { email: sender, name: senderName },
++        subject,
++        html: content,
++      })
++      if (!result?.messageId) {
++        return Response.json({ error: 'CLOUDFLARE_EMAIL_RESULT_UNKNOWN' }, { status: 502 })
++      }
++      // 接受发送不是送达证明；最终送达在真实业务验收中核对。
++      return Response.json({ messageId: result.messageId }, { status: 202 })
++    } catch {
++      // provider 异常可能含收件人/正文；只返回固定错误，不泄露验证码。
++      return Response.json({ error: 'CLOUDFLARE_EMAIL_FAILED' }, { status: 502 })
++    }
++  }
++}

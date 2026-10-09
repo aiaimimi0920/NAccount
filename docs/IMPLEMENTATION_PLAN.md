@@ -1,5 +1,16 @@
 # 初始工程落地范围
 
+## NA-09-S01：普通用户入口与个人中心（源码已验证，部署集成待完成）
+
+负责人主 AI。边界、社交绑定后续验收与配置见 [USER_CENTER.md](USER_CENTER.md)。
+本轮先接入独立普通用户门户与现有认证策略，禁止放宽管理员后台权限。
+社交绑定不得复用管理员的双账号 linkedAuthId 关联来伪装统一身份；第三方身份安全绑定和登录归一另验。
+用户已授权本地提交与补丁导出。定制提交 `2774512cf4eb50bd0a51120e5d896dab425cd2ee`，topic `user-portal`；
+export 与 verify 通过，generation `d88c6ec5846ec3eb31b978dc6560ff0a22b8c724e1cf7d7647a1bddcf8a31ebb`。
+门户/既有登录视图回归107项、主仓库回归95项、TypeScript与客户端/Worker构建通过。尚未推送或发布；
+独立portal client的SBA自动配置和真实浏览器OAuth验收未完成，不能宣称线上可用。
+下一步为已确认的Google/GitHub自助绑定与同账号登录，并补齐部署集成；不使用历史授权云写。
+
 ## NA-08-S01：仅补发后台的正式修复（2026-10-09）
 
 负责人主 AI。用户选择 SpringBok 控制台 repair，不通过本地 CLI 补发。

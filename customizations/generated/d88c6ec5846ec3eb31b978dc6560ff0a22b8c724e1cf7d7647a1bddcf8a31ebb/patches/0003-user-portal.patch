@@ -1,0 +1,717 @@
+From 2774512cf4eb50bd0a51120e5d896dab425cd2ee Mon Sep 17 00:00:00 2001
+From: aiaimimi0920 <153103332+aiaimimi0920@users.noreply.github.com>
+Date: Fri, 9 Oct 2026 10:55:32 -0700
+Subject: [PATCH] feat(NA-09-S01): add ordinary-user account portal
+
+NAccount-Patch-Topic: user-portal
+---
+ server/src/configs/type.ts                |   1 +
+ server/src/pages/account/Account.test.tsx |  76 +++++++++++
+ server/src/pages/account/Account.tsx      |  93 ++++++++++++++
+ server/src/pages/account/auth.test.ts     | 150 ++++++++++++++++++++++
+ server/src/pages/account/auth.ts          | 148 +++++++++++++++++++++
+ server/src/pages/client.tsx               |   3 +-
+ server/src/pages/hooks/useCurrentView.ts  |   4 +
+ server/src/router.tsx                     |   2 +
+ server/src/routes/account.test.ts         |  59 +++++++++
+ server/src/routes/account.tsx             |  56 ++++++++
+ 10 files changed, 591 insertions(+), 1 deletion(-)
+ create mode 100644 server/src/pages/account/Account.test.tsx
+ create mode 100644 server/src/pages/account/Account.tsx
+ create mode 100644 server/src/pages/account/auth.test.ts
+ create mode 100644 server/src/pages/account/auth.ts
+ create mode 100644 server/src/routes/account.test.ts
+ create mode 100644 server/src/routes/account.tsx
+
+diff --git a/server/src/configs/type.ts b/server/src/configs/type.ts
+index 3b92190e7ec3c5a2b09bd711693026c50d3f40cd..a99594e7da34583db76834972b7d751a59e6c85a 100644
+--- a/server/src/configs/type.ts
++++ b/server/src/configs/type.ts
+@@ -47,6 +47,7 @@ export type Bindings = {
+   EMAIL_SENDER_NAME: string;
+   SMTP_SENDER_ADDRESS: string;
+   AUTH_SERVER_URL: string;
++  NACCOUNT_PORTAL_CLIENT_ID?: string;
+   ENABLE_SIGN_UP: boolean;
+   ENABLE_PASSWORD_SIGN_IN: boolean;
+   ENABLE_PASSWORD_RESET: boolean;
+diff --git a/server/src/pages/account/Account.test.tsx b/server/src/pages/account/Account.test.tsx
+new file mode 100644
+index 0000000000000000000000000000000000000000..1b5ffdae1ee324d8c57361cae1e5453c4d66cff2
+--- /dev/null
++++ b/server/src/pages/account/Account.test.tsx
+@@ -0,0 +1,76 @@
++import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
++import { render } from 'hono/jsx/dom'
++import { fireEvent, getByRole, queryByRole, waitFor } from '@testing-library/dom'
++import Account from './Account'
++import * as auth from './auth'
++
++vi.mock('./auth', async (original) => ({
++  ...await original<typeof import('./auth')>(),
++  request: vi.fn(), restore: vi.fn(), profile: vi.fn(), authorize: vi.fn(), logout: vi.fn(),
++}))
++const config: auth.PortalConfig = {
++  clientId: 'portal', serverUri: 'https://auth.example.test', redirectUri: 'https://auth.example.test/account',
++  signup: true, policies: ['update_info', 'change_password'],
++}
++let container: HTMLDivElement
++
++beforeEach(() => {
++  vi.resetAllMocks()
++  container = document.createElement('div')
++  document.body.appendChild(container)
++  vi.mocked(auth.request).mockResolvedValue(config)
++  vi.mocked(auth.restore).mockResolvedValue(null)
++})
++afterEach(() => { render(null, container); container.remove() })
++
++describe('ordinary-user account center', () => {
++  it('offers separate login and registration without an admin role', async () => {
++    render(<Account />, container)
++    await waitFor(() => expect(getByRole(container, 'button', { name: '注册账号' })).toBeTruthy())
++    fireEvent.click(getByRole(container, 'button', { name: '注册账号' }))
++    await waitFor(() => expect(auth.authorize).toHaveBeenCalledWith(config, undefined, true))
++  })
++  it('does not offer disabled registration', async () => {
++    vi.mocked(auth.request).mockResolvedValue({ ...config, signup: false })
++    render(<Account />, container)
++    await waitFor(() => expect(getByRole(container, 'button', { name: '登录' })).toBeTruthy())
++    expect(queryByRole(container, 'button', { name: '注册账号' })).toBeNull()
++  })
++  it('shows current-user data and only enabled policy actions', async () => {
++    vi.mocked(auth.restore).mockResolvedValue('access')
++    vi.mocked(auth.profile).mockResolvedValue({ authId: 'ordinary-user', email: 'user@example.test', emailVerified: true })
++    render(<Account />, container)
++    await waitFor(() => expect(container.textContent).toContain('user@example.test'))
++    expect(container.textContent).toContain('已验证')
++    expect(queryByRole(container, 'button', { name: '管理 Passkey' })).toBeNull()
++    fireEvent.click(getByRole(container, 'button', { name: '修改个人资料' }))
++    await waitFor(() => expect(auth.authorize).toHaveBeenCalledWith(config, 'update_info'))
++  })
++  it('escapes account text instead of rendering HTML', async () => {
++    vi.mocked(auth.restore).mockResolvedValue('access')
++    vi.mocked(auth.profile).mockResolvedValue({ authId: 'user', email: '<img src=x onerror=alert(1)>', emailVerified: false })
++    render(<Account />, container)
++    await waitFor(() => expect(container.textContent).toContain('<img src=x'))
++    expect(container.querySelector('img')).toBeNull()
++  })
++  it('ends loading and allows recovery after failed userinfo', async () => {
++    vi.mocked(auth.restore).mockResolvedValue('access')
++    vi.mocked(auth.profile).mockRejectedValue(new auth.PortalError('SESSION_EXPIRED'))
++    render(<Account />, container)
++    await waitFor(() => expect(getByRole(container, 'alert').textContent).toContain('登录已过期'))
++    expect(queryByRole(container, 'status')).toBeNull()
++    expect((getByRole(container, 'button', { name: '登录' }) as HTMLButtonElement).disabled).toBe(false)
++  })
++  it('displays unavailable configuration without a false usable entry', async () => {
++    vi.mocked(auth.request).mockRejectedValue(new auth.PortalError('NOT_CONFIGURED'))
++    render(<Account />, container)
++    await waitFor(() => expect(getByRole(container, 'alert').textContent).toContain('尚未配置'))
++    expect(queryByRole(container, 'status')).toBeNull()
++    expect(queryByRole(container, 'button', { name: '注册账号' })).toBeNull()
++  })
++  it('does not show social binding as implemented before its API exists', async () => {
++    render(<Account />, container)
++    await waitFor(() => expect(getByRole(container, 'button', { name: '登录' })).toBeTruthy())
++    expect(queryByRole(container, 'button', { name: /绑定/ })).toBeNull()
++  })
++})
+diff --git a/server/src/pages/account/Account.tsx b/server/src/pages/account/Account.tsx
+new file mode 100644
+index 0000000000000000000000000000000000000000..a4cf3e7392465e83f074da85fa62b3eac0efb55c
+--- /dev/null
++++ b/server/src/pages/account/Account.tsx
+@@ -0,0 +1,93 @@
++import { useEffect, useState } from 'hono/jsx'
++import * as auth from './auth'
++
++const actions: Record<string, string> = {
++  update_info: '修改个人资料', change_password: '修改密码', change_email: '修改邮箱',
++  reset_mfa: '重置多因素认证', manage_passkey: '管理 Passkey', manage_recovery_code: '管理恢复码',
++}
++const errors: Record<string, string> = {
++  SESSION_EXPIRED: '登录已过期，请重新登录。',
++  NETWORK_ERROR: '网络请求超时或失败，请重试。',
++  REQUEST_FAILED: '操作未完成，请重试或重新登录。',
++  INVALID_CALLBACK: '登录请求已失效或被取消，请重新登录。',
++  NOT_CONFIGURED: '个人中心尚未配置完成。',
++}
++
++export default function Account() {
++  const [config, setConfig] = useState<auth.PortalConfig | null>(null)
++  const [user, setUser] = useState<auth.Profile | null>(null)
++  const [accessToken, setAccessToken] = useState<string | null>(null)
++  const [busy, setBusy] = useState(true)
++  const [error, setError] = useState('')
++  const [attempt, setAttempt] = useState(0)
++
++  useEffect(() => {
++    let cancelled = false
++    setBusy(true)
++    setError('')
++    const load = async () => {
++      try {
++        const nextConfig = await auth.request<auth.PortalConfig>('/account/config')
++        if (cancelled) return
++        setConfig(nextConfig)
++        const token = await auth.restore(nextConfig)
++        if (cancelled) return
++        const nextUser = token ? await auth.profile(nextConfig, token) : null
++        if (!cancelled) { setAccessToken(token); setUser(nextUser) }
++      } catch (cause) {
++        if (!cancelled) setError(errors[cause instanceof auth.PortalError ? cause.code : 'REQUEST_FAILED'])
++      } finally {
++        if (!cancelled) setBusy(false)
++      }
++    }
++    void load()
++    return () => { cancelled = true }
++  }, [attempt])
++
++  const run = async (operation: () => Promise<void>) => {
++    if (busy) return
++    setBusy(true)
++    setError('')
++    try { await operation() } catch (cause) {
++      setError(errors[cause instanceof auth.PortalError ? cause.code : 'REQUEST_FAILED'])
++    } finally { setBusy(false) }
++  }
++  const button = 'rounded-lg border border-slate-300 px-4 py-3 text-left hover:bg-slate-100 focus-visible:outline-2 focus-visible:outline-offset-2 disabled:opacity-50'
++
++  return <main class='min-h-screen bg-slate-50 text-slate-900 px-4 py-12'>
++    <div class='mx-auto max-w-2xl flex flex-col gap-6'>
++      <header><p class='font-semibold text-sm'>NAccount</p><h1 class='text-3xl font-bold mt-2'>个人中心</h1></header>
++      {busy && <p role='status'>正在处理…</p>}
++      {error && <section class='rounded-lg border border-red-300 bg-red-50 p-4' role='alert'>
++        <p>{error}</p><button class={`${button} mt-3`} disabled={busy} onClick={() => setAttempt(attempt + 1)}>重试</button>
++      </section>}
++      {!user && config && <section class='flex flex-wrap gap-3' aria-label='账号入口'>
++        <button class={button} disabled={busy} onClick={() => run(() => auth.authorize(config))}>登录</button>
++        {config.signup && <button class={button} disabled={busy} onClick={() => run(() => auth.authorize(config, undefined, true))}>注册账号</button>}
++      </section>}
++      {user && config && <>
++        <section class='rounded-xl border border-slate-200 bg-white p-6'>
++          <h2 class='text-lg font-semibold mb-4'>账号资料</h2>
++          <dl class='grid grid-cols-[auto_1fr] gap-x-6 gap-y-3 break-all'>
++            <dt>邮箱</dt><dd>{user.email || '未设置'}</dd>
++            <dt>邮箱状态</dt><dd>{user.emailVerified ? '已验证' : '未验证'}</dd>
++            <dt>姓名</dt><dd>{[user.firstName, user.lastName].filter(Boolean).join(' ') || '未设置'}</dd>
++            <dt>账号 ID</dt><dd>{user.authId}</dd>
++          </dl>
++        </section>
++        <section aria-labelledby='account-security'>
++          <h2 id='account-security' class='text-lg font-semibold mb-4'>资料与安全</h2>
++          <div class='grid gap-3 sm:grid-cols-2'>
++            {config.policies.filter((policy) => actions[policy]).map((policy) => <button key={policy} class={button} disabled={busy}
++              onClick={() => run(() => auth.authorize(config, policy))}>{actions[policy]}</button>)}
++          </div>
++        </section>
++        <button class={button} disabled={busy} onClick={() => run(async () => {
++          setUser(null)
++          setAccessToken(null)
++          await auth.logout(config, accessToken)
++        })}>退出登录</button>
++      </>}
++    </div>
++  </main>
++}
+diff --git a/server/src/pages/account/auth.test.ts b/server/src/pages/account/auth.test.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..c3edff3189f5b6a53cda11f3ca6e2d406fcc2de0
+--- /dev/null
++++ b/server/src/pages/account/auth.test.ts
+@@ -0,0 +1,150 @@
++import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
++import { webcrypto } from 'node:crypto'
++import { authorize, clearSession, restore, request, profile, logout, type PortalConfig } from './auth'
++
++const config: PortalConfig = {
++  clientId: 'portal-only', serverUri: 'https://auth.example.test',
++  redirectUri: 'https://auth.example.test/account', signup: true, policies: ['update_info'],
++}
++const transactionKey = 'naccount.portal.transaction'
++const refreshKey = 'naccount.portal.refresh'
++const fetchMock = vi.fn()
++const assign = vi.fn()
++const replaceState = vi.fn()
++
++beforeEach(() => {
++  sessionStorage.clear()
++  fetchMock.mockReset()
++  assign.mockReset()
++  replaceState.mockReset()
++  vi.stubGlobal('fetch', fetchMock)
++  vi.stubGlobal('crypto', webcrypto)
++  vi.stubGlobal('window', { location: { pathname: '/account', search: '', assign }, history: { replaceState } })
++})
++afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers() })
++
++function callback(overrides = {}, query = '?code=code&state=state') {
++  window.location.search = query
++  sessionStorage.setItem(transactionKey, JSON.stringify({ state: 'state', verifier: 'v'.repeat(64), clientId: config.clientId, created: Date.now(), ...overrides }))
++}
++
++describe('portal authorization boundaries', () => {
++  it('starts registration on the interactive view with independent PKCE and state', async () => {
++    await authorize(config, undefined, true)
++    const url = new URL(assign.mock.calls[0][0])
++    const stored = JSON.parse(sessionStorage.getItem(transactionKey)!)
++    expect(url.pathname).toBe('/identity/v1/view/authorize')
++    expect(url.searchParams.get('screen')).toBe('signup')
++    expect(url.searchParams.get('client_id')).toBe(config.clientId)
++    expect(url.searchParams.get('scope')).toBe('openid profile offline_access')
++    expect(url.searchParams.get('code_challenge_method')).toBe('S256')
++    expect(url.searchParams.get('state')).toBe(stored.state)
++    expect(url.searchParams.get('code_challenge')).toHaveLength(43)
++    expect(stored.verifier).toHaveLength(64)
++    expect(stored.state).not.toBe(stored.verifier)
++  })
++  it('does not start disabled registration or arbitrary policies', async () => {
++    await expect(authorize({ ...config, signup: false }, undefined, true)).rejects.toMatchObject({ code: 'REQUEST_FAILED' })
++    await expect(authorize(config, 'arbitrary_policy')).rejects.toMatchObject({ code: 'REQUEST_FAILED' })
++    expect(assign).not.toHaveBeenCalled()
++  })
++  it('discards a refresh token after the configured portal client changes', async () => {
++    sessionStorage.setItem(refreshKey, JSON.stringify({ clientId: 'old-client', token: 'old-token' }))
++    expect(await restore(config)).toBeNull()
++    expect(fetchMock).not.toHaveBeenCalled()
++    expect(sessionStorage.getItem(refreshKey)).toBeNull()
++  })
++  it('does not restore tokens belonging to an administrator SDK', async () => {
++    sessionStorage.setItem('melody-auth-refresh-token', 'administrator-token')
++    expect(await restore(config)).toBeNull()
++    expect(fetchMock).not.toHaveBeenCalled()
++  })
++  it('exchanges a matching one-time callback using PKCE and clears the URL', async () => {
++    callback()
++    fetchMock.mockResolvedValue(Response.json({ access_token: 'access', refresh_token: 'refresh' }))
++    expect(await restore(config)).toBe('access')
++    const body = new URLSearchParams(fetchMock.mock.calls[0][1].body)
++    expect(body.get('code_verifier')).toBe('v'.repeat(64))
++    expect(body.get('redirect_uri')).toBe(config.redirectUri)
++    expect(sessionStorage.getItem(transactionKey)).toBeNull()
++    expect(JSON.parse(sessionStorage.getItem(refreshKey)!).token).toBe('refresh')
++    expect(replaceState).toHaveBeenCalledWith(null, '', '/account')
++    await expect(restore(config)).rejects.toMatchObject({ code: 'INVALID_CALLBACK' })
++    expect(fetchMock).toHaveBeenCalledTimes(1)
++  })
++  it.each([
++    [{ state: 'different' }, '?code=code&state=state'],
++    [{ clientId: 'admin' }, '?code=code&state=state'],
++    [{ created: Date.now() - 700000 }, '?code=code&state=state'],
++    [{ created: Date.now() + 700000 }, '?code=code&state=state'],
++    [{ created: 'invalid' }, '?code=code&state=state'],
++    [{ verifier: '' }, '?code=code&state=state'],
++    [{}, '?code=code&state=state&state=state'],
++    [{}, '?code=code&code=code&state=state'],
++    [{}, '?error=access_denied&state=state'],
++    [{}, '?code=code'],
++    [{}, '?state=state'],
++  ])('rejects malformed, stale or cross-client callbacks', async (overrides, query) => {
++    callback(overrides, query)
++    await expect(restore(config)).rejects.toMatchObject({ code: 'INVALID_CALLBACK' })
++    expect(fetchMock).not.toHaveBeenCalled()
++    expect(sessionStorage.getItem(transactionKey)).toBeNull()
++    expect(replaceState).toHaveBeenCalled()
++  })
++  it('rejects corrupted persisted state without leaking it', async () => {
++    callback()
++    sessionStorage.setItem(transactionKey, '{secret')
++    await expect(restore(config)).rejects.toMatchObject({ message: 'INVALID_CALLBACK' })
++  })
++  it('restores and rotates only the portal refresh token', async () => {
++    sessionStorage.setItem(refreshKey, JSON.stringify({ clientId: config.clientId, token: 'refresh' }))
++    fetchMock.mockResolvedValue(Response.json({ access_token: 'access', refresh_token: 'rotated' }))
++    expect(await restore(config)).toBe('access')
++    expect(JSON.parse(sessionStorage.getItem(refreshKey)!).token).toBe('rotated')
++  })
++  it('clears a rejected refresh token', async () => {
++    sessionStorage.setItem(refreshKey, JSON.stringify({ clientId: config.clientId, token: 'expired' }))
++    fetchMock.mockResolvedValue(new Response('sensitive upstream body', { status: 401 }))
++    await expect(restore(config)).rejects.toMatchObject({ message: 'SESSION_EXPIRED' })
++    expect(sessionStorage.getItem(refreshKey)).toBeNull()
++  })
++  it('keeps a refresh token during a transient network failure', async () => {
++    sessionStorage.setItem(refreshKey, JSON.stringify({ clientId: config.clientId, token: 'refresh' }))
++    fetchMock.mockRejectedValue(new Error('sensitive request detail'))
++    await expect(restore(config)).rejects.toMatchObject({ message: 'NETWORK_ERROR' })
++    expect(JSON.parse(sessionStorage.getItem(refreshKey)!).token).toBe('refresh')
++  })
++  it('reads only the current user endpoint', async () => {
++    fetchMock.mockResolvedValue(Response.json({ authId: 'ordinary-user', emailVerified: true }))
++    expect(await profile(config, 'access')).toMatchObject({ authId: 'ordinary-user' })
++    expect(fetchMock.mock.calls[0][0]).toBe(`${config.serverUri}/oauth2/v1/userinfo`)
++    expect(fetchMock.mock.calls[0][1].headers).toEqual({ Authorization: 'Bearer access' })
++  })
++  it('clears local state even if remote logout fails, without claiming remote success', async () => {
++    sessionStorage.setItem(refreshKey, JSON.stringify({ clientId: config.clientId, token: 'refresh' }))
++    fetchMock.mockRejectedValue(new Error('network'))
++    await expect(logout(config, 'access')).rejects.toMatchObject({ code: 'NETWORK_ERROR' })
++    expect(sessionStorage.getItem(refreshKey)).toBeNull()
++    expect(assign).not.toHaveBeenCalled()
++  })
++  it('never follows an upstream logout redirect', async () => {
++    sessionStorage.setItem(refreshKey, JSON.stringify({ clientId: config.clientId, token: 'refresh' }))
++    fetchMock.mockResolvedValue(Response.json({ redirectUri: 'https://evil.example' }))
++    await logout(config, 'access')
++    expect(assign.mock.calls[0][0]).toContain(`${config.serverUri}/oauth2/v1/logout?`)
++  })
++  it('aborts a stalled request after 15 seconds', async () => {
++    vi.useFakeTimers()
++    fetchMock.mockImplementation((_url, { signal }) => new Promise((_resolve, reject) => {
++      signal.addEventListener('abort', () => reject(new Error('aborted')))
++    }))
++    const result = expect(request('/account/config')).rejects.toMatchObject({ code: 'NETWORK_ERROR' })
++    await vi.advanceTimersByTimeAsync(15000)
++    await result
++  })
++  it('does not erase other applications storage', () => {
++    sessionStorage.setItem('another-app', 'keep')
++    clearSession()
++    expect(sessionStorage.getItem('another-app')).toBe('keep')
++  })
++})
+diff --git a/server/src/pages/account/auth.ts b/server/src/pages/account/auth.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..42ca8fe78ba13466158f38aef42c68b33b197680
+--- /dev/null
++++ b/server/src/pages/account/auth.ts
+@@ -0,0 +1,148 @@
++export interface PortalConfig {
++  clientId: string;
++  serverUri: string;
++  redirectUri: string;
++  signup: boolean;
++  policies: string[];
++}
++
++export interface Profile {
++  authId: string;
++  email: string | null;
++  emailVerified: boolean;
++  firstName?: string | null;
++  lastName?: string | null;
++}
++
++const transactionKey = 'naccount.portal.transaction'
++const refreshKey = 'naccount.portal.refresh'
++const transactionTtl = 10 * 60 * 1000
++
++export class PortalError extends Error {
++  constructor(public code: 'SESSION_EXPIRED' | 'NETWORK_ERROR' | 'REQUEST_FAILED' | 'INVALID_CALLBACK' | 'NOT_CONFIGURED') {
++    super(code)
++  }
++}
++
++export async function request<T>(url: string, options: RequestInit = {}): Promise<T> {
++  const controller = new AbortController()
++  const timer = setTimeout(() => controller.abort(), 15000)
++  try {
++    const response = await fetch(url, { ...options, signal: controller.signal, cache: 'no-store' })
++    if (!response.ok) {
++      // Do not expose upstream bodies: they can contain account or token data.
++      throw new PortalError(response.status === 401 ? 'SESSION_EXPIRED' : response.status === 503 ? 'NOT_CONFIGURED' : 'REQUEST_FAILED')
++    }
++    return await response.json() as T
++  } catch (error) {
++    if (error instanceof PortalError) throw error
++    throw new PortalError('NETWORK_ERROR')
++  } finally {
++    clearTimeout(timer)
++  }
++}
++
++const random = () => {
++  const bytes = crypto.getRandomValues(new Uint8Array(32))
++  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('')
++}
++
++export const clearSession = () => {
++  sessionStorage.removeItem(refreshKey)
++  sessionStorage.removeItem(transactionKey)
++}
++
++function refreshFor(config: PortalConfig): string | null {
++  try {
++    const value = JSON.parse(sessionStorage.getItem(refreshKey) ?? 'null')
++    if (value?.clientId === config.clientId && typeof value.token === 'string' && value.token) return value.token
++  } catch { /* Corrupt browser storage is not an authenticated session. */ }
++  sessionStorage.removeItem(refreshKey)
++  return null
++}
++
++export async function authorize(config: PortalConfig, policy?: string, signup = false) {
++  if (policy && !config.policies.includes(policy)) throw new PortalError('REQUEST_FAILED')
++  if (signup && !config.signup) throw new PortalError('REQUEST_FAILED')
++  const verifier = random()
++  const state = random()
++  const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier)))
++  const challenge = btoa(String.fromCharCode(...digest)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
++  sessionStorage.setItem(transactionKey, JSON.stringify({ state, verifier, created: Date.now(), clientId: config.clientId }))
++  const params = new URLSearchParams({
++    response_type: 'code', client_id: config.clientId, redirect_uri: config.redirectUri,
++    state, code_challenge: challenge, code_challenge_method: 'S256',
++    scope: 'openid profile offline_access', authorize_method: 'redirect',
++    policy: policy ?? 'sign_in_or_sign_up',
++  })
++  if (signup) params.set('screen', 'signup')
++  // Registration deliberately starts at the validated interactive view, not an existing SSO session.
++  const path = signup ? '/identity/v1/view/authorize' : '/oauth2/v1/authorize'
++  window.location.assign(`${config.serverUri}${path}?${params}`)
++}
++
++interface Tokens { access_token: string; refresh_token?: string }
++
++async function token(config: PortalConfig, data: Record<string, string>) {
++  const result = await request<Tokens>(`${config.serverUri}/oauth2/v1/token`, {
++    method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
++    body: new URLSearchParams(data).toString(),
++  })
++  if (!result.access_token || typeof result.access_token !== 'string') throw new PortalError('REQUEST_FAILED')
++  if (result.refresh_token && typeof result.refresh_token === 'string') {
++    sessionStorage.setItem(refreshKey, JSON.stringify({ clientId: config.clientId, token: result.refresh_token }))
++  }
++  return result.access_token
++}
++
++export async function restore(config: PortalConfig): Promise<string | null> {
++  const params = new URLSearchParams(window.location.search)
++  if (params.has('code') || params.has('state') || params.has('error')) {
++    const stored = sessionStorage.getItem(transactionKey)
++    sessionStorage.removeItem(transactionKey)
++    sessionStorage.removeItem(refreshKey)
++    // Remove authorization material even on denial, malformed state or network failure.
++    window.history.replaceState(null, '', window.location.pathname)
++    let transaction
++    try { transaction = JSON.parse(stored ?? 'null') } catch { throw new PortalError('INVALID_CALLBACK') }
++    if (!transaction || params.has('error') || params.getAll('code').length !== 1 || params.getAll('state').length !== 1 ||
++      !params.get('code') || !params.get('state') || params.get('state') !== transaction.state ||
++      transaction.clientId !== config.clientId || typeof transaction.verifier !== 'string' || transaction.verifier.length !== 64 ||
++      !Number.isFinite(transaction.created) || Date.now() - transaction.created > transactionTtl || transaction.created > Date.now()) {
++      throw new PortalError('INVALID_CALLBACK')
++    }
++    // Never fall back to another stored account after a failed callback.
++    sessionStorage.removeItem(refreshKey)
++    return token(config, {
++      grant_type: 'authorization_code', code: params.get('code')!,
++      redirect_uri: config.redirectUri, code_verifier: transaction.verifier,
++    })
++  }
++  const refresh = refreshFor(config)
++  if (!refresh) return null
++  try {
++    return await token(config, { grant_type: 'refresh_token', refresh_token: refresh })
++  } catch (error) {
++    if (error instanceof PortalError && ['SESSION_EXPIRED', 'REQUEST_FAILED'].includes(error.code)) clearSession()
++    throw error
++  }
++}
++
++export const profile = (config: PortalConfig, accessToken: string) => request<Profile>(`${config.serverUri}/oauth2/v1/userinfo`, {
++  headers: { Authorization: `Bearer ${accessToken}` },
++})
++
++export async function logout(config: PortalConfig, accessToken: string | null) {
++  const refresh = refreshFor(config)
++  clearSession()
++  if (refresh && accessToken) {
++    await request(`${config.serverUri}/identity/v1/logout`, {
++      method: 'POST',
++      headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/x-www-form-urlencoded' },
++      body: new URLSearchParams({ refresh_token: refresh, post_logout_redirect_uri: config.redirectUri }).toString(),
++    })
++  }
++  // The server clears the SSO cookie too; never follow a response-controlled redirect.
++  const params = new URLSearchParams({ client_id: config.clientId, post_logout_redirect_uri: config.redirectUri })
++  window.location.assign(`${config.serverUri}/oauth2/v1/logout?${params}`)
++}
+diff --git a/server/src/pages/client.tsx b/server/src/pages/client.tsx
+index a8428b5d29c096a3f41439e2082b9f5d12f2b0fa..b20d5d5e9fbdabca15f0d85af879f0e9e6b8bfa8 100644
+--- a/server/src/pages/client.tsx
++++ b/server/src/pages/client.tsx
+@@ -2,9 +2,10 @@ import { render } from 'hono/jsx/dom'
+ import './client.css'
+ 
+ import Main from './Main'
++import Account from './account/Account'
+ 
+ const root = document.getElementById('root')!
+ render(
+-  <Main />,
++  window.location.pathname === '/account' ? <Account /> : <Main />,
+   root,
+ )
+diff --git a/server/src/pages/hooks/useCurrentView.ts b/server/src/pages/hooks/useCurrentView.ts
+index 634a6266c1667d824a92ff50727b7bd4f7262942..3c1e0dcdf1c5bd6fc3b8a28afda69e6dedceb252 100644
+--- a/server/src/pages/hooks/useCurrentView.ts
++++ b/server/src/pages/hooks/useCurrentView.ts
+@@ -6,10 +6,12 @@ import {
+   getStepFromParams, getMagicSignInParams, getInvitationParams,
+ } from 'pages/tools/param'
+ import { View } from 'configs/route'
++import useInitialProps from './useInitialProps'
+ 
+ export { View }
+ 
+ const useCurrentView = () => {
++  const { initialProps } = useInitialProps()
+   const initialView = useMemo(
+     () => {
+       const step = getStepFromParams()
+@@ -30,6 +32,8 @@ const useCurrentView = () => {
+         return View.SignIn
+       }
+       default:
++        if (window.location.pathname === routeConfig.IdentityRoute.AuthorizeView &&
++          new URLSearchParams(window.location.search).get('screen') === 'signup' && initialProps.enableSignUp) return View.SignUp
+         return View.SignIn
+       }
+     },
+diff --git a/server/src/router.tsx b/server/src/router.tsx
+index faec01de8249b1d90a1707695f2811170a6d596f..09f1b555c8b51e7968927382ca63548ffa7ab241 100644
+--- a/server/src/router.tsx
++++ b/server/src/router.tsx
+@@ -11,6 +11,7 @@ import {
+   routeConfig, typeConfig, variableConfig,
+ } from 'configs'
+ import { loggerUtil } from 'utils'
++import accountRoute from 'routes/account'
+ 
+ export const loadRouters = (app: Hono<typeConfig.Context>) => {
+   app.use(
+@@ -109,6 +110,7 @@ export const loadRouters = (app: Hono<typeConfig.Context>) => {
+     '/',
+     otherRoute,
+   )
++  app.route('/', accountRoute)
+ 
+   return app
+ }
+diff --git a/server/src/routes/account.test.ts b/server/src/routes/account.test.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..7e7539aaf4b95681304ad2366b7c9b4d6f0766c0
+--- /dev/null
++++ b/server/src/routes/account.test.ts
+@@ -0,0 +1,59 @@
++import { beforeEach, describe, expect, it, vi } from 'vitest'
++import { ClientType } from '@melody-auth/shared'
++import account from './account'
++import { appModel } from 'models'
++
++vi.mock('models', () => ({ appModel: { getByClientId: vi.fn() } }))
++const env = {
++  NACCOUNT_PORTAL_CLIENT_ID: 'portal-only', AUTH_SERVER_URL: 'https://auth.example.test',
++  ENABLE_SIGN_UP: true, ENABLE_PASSWORD_RESET: true, ENABLE_EMAIL_VERIFICATION: true,
++  ENABLE_RECOVERY_CODE: true, ALLOW_PASSKEY_ENROLLMENT: true, BLOCKED_POLICIES: ['change_org'],
++  ENVIRONMENT: 'prod', DB: {},
++} as any
++
++beforeEach(() => {
++  vi.mocked(appModel.getByClientId).mockReset()
++  vi.mocked(appModel.getByClientId).mockResolvedValue({
++    clientId: 'portal-only', isActive: true, type: ClientType.SPA,
++    redirectUris: ['https://auth.example.test/account'], secret: 'must-never-leak',
++  } as any)
++})
++
++describe('public account surface', () => {
++  it('serves an ordinary-user portal without authentication or admin privilege', async () => {
++    const res = await account.request('/account', {}, env)
++    expect(res.status).toBe(200)
++    expect(res.headers.get('Cache-Control')).toBe('no-store')
++    expect(res.headers.get('Referrer-Policy')).toBe('no-referrer')
++    expect(res.headers.get('X-Frame-Options')).toBe('DENY')
++    const html = await res.text()
++    expect(html).toContain('个人中心')
++    expect(html).toContain('/client.js')
++    expect(html).not.toContain('must-never-leak')
++  })
++  it('returns only allowlisted public configuration', async () => {
++    const res = await account.request('/account/config', {}, env)
++    expect(await res.json()).toEqual({
++      clientId: 'portal-only', serverUri: 'https://auth.example.test', redirectUri: 'https://auth.example.test/account', signup: true,
++      policies: ['update_info', 'reset_mfa', 'change_password', 'change_email', 'manage_passkey', 'manage_recovery_code'],
++    })
++  })
++  it('does not guess another client when configuration is missing', async () => {
++    const res = await account.request('/account/config', {}, { ...env, NACCOUNT_PORTAL_CLIENT_ID: undefined })
++    expect(res.status).toBe(503)
++    expect(appModel.getByClientId).not.toHaveBeenCalled()
++  })
++  it.each([null, { isActive: false }, { type: ClientType.S2S }, { redirectUris: ['https://evil.example/account'] }])('rejects unavailable or mismatched clients', async (override) => {
++    const original = await appModel.getByClientId(env.DB, 'portal-only')
++    vi.mocked(appModel.getByClientId).mockResolvedValue(override === null ? null : { ...original, ...override } as any)
++    const res = await account.request('/account/config', {}, env)
++    expect(res.status).toBe(503)
++  })
++  it('respects disabled and blocked policies', async () => {
++    const res = await account.request('/account/config', {}, {
++      ...env, ENABLE_PASSWORDLESS_SIGN_IN: true, ENABLE_EMAIL_VERIFICATION: false,
++      BLOCKED_POLICIES: ['reset_mfa', 'update_info'],
++    })
++    expect(await res.json()).toMatchObject({ signup: false, policies: [] })
++  })
++})
+diff --git a/server/src/routes/account.tsx b/server/src/routes/account.tsx
+new file mode 100644
+index 0000000000000000000000000000000000000000..f07077a2cfa9e7f468b46ddcbb886e1d179439d0
+--- /dev/null
++++ b/server/src/routes/account.tsx
+@@ -0,0 +1,56 @@
++import { Hono } from 'hono'
++import { ClientType } from '@melody-auth/shared'
++import { typeConfig } from 'configs'
++import { appModel } from 'models'
++
++// This surface never resolves or exposes the administrator application's secret.
++const account = new Hono<typeConfig.Context>()
++
++account.use('*', async (c, next) => {
++  c.header('Cache-Control', 'no-store')
++  c.header('Referrer-Policy', 'no-referrer')
++  c.header('X-Content-Type-Options', 'nosniff')
++  c.header('X-Frame-Options', 'DENY')
++  await next()
++})
++
++account.get('/account/config', async (c) => {
++  const clientId = c.env.NACCOUNT_PORTAL_CLIENT_ID
++  if (!clientId) return c.json({ error: 'PORTAL_NOT_CONFIGURED' }, 503)
++  const app = await appModel.getByClientId(c.env.DB, clientId)
++  const redirectUri = `${c.env.AUTH_SERVER_URL.replace(/\/$/, '')}/account`
++  if (!app || !app.isActive || app.type !== ClientType.SPA || !app.redirectUris.includes(redirectUri)) {
++    return c.json({ error: 'PORTAL_CLIENT_INVALID' }, 503)
++  }
++  const blocked = c.env.BLOCKED_POLICIES ?? []
++  const policies = ['update_info', 'reset_mfa']
++  if (c.env.ENABLE_PASSWORD_RESET && !c.env.ENABLE_PASSWORDLESS_SIGN_IN) policies.push('change_password')
++  if (c.env.ENABLE_EMAIL_VERIFICATION) policies.push('change_email')
++  if (c.env.ALLOW_PASSKEY_ENROLLMENT && !c.env.ENABLE_PASSWORDLESS_SIGN_IN) policies.push('manage_passkey')
++  if (c.env.ENABLE_RECOVERY_CODE && !c.env.ENABLE_PASSWORDLESS_SIGN_IN) policies.push('manage_recovery_code')
++  return c.json({
++    clientId,
++    redirectUri,
++    serverUri: c.env.AUTH_SERVER_URL.replace(/\/$/, ''),
++    signup: !!c.env.ENABLE_SIGN_UP && !c.env.ENABLE_PASSWORDLESS_SIGN_IN,
++    policies: policies.filter((policy) => !blocked.includes(policy)),
++  })
++})
++
++account.get('/account', (c) => c.html(
++  <html lang='zh-CN'>
++    <head>
++      <meta charset='utf-8' />
++      <meta name='viewport' content='width=device-width, initial-scale=1' />
++      <title>NAccount · 个人中心</title>
++      <link rel='stylesheet' href={c.env.ENVIRONMENT === 'dev' ? '/src/pages/client.css' : '/client.css'} />
++    </head>
++    <body>
++      <div id='root' />
++      <noscript>请启用 JavaScript 以使用个人中心。</noscript>
++      <script type='module' src={c.env.ENVIRONMENT === 'dev' ? '/src/pages/client.tsx' : '/client.js'} />
++    </body>
++  </html>,
++))
++
++export default account
