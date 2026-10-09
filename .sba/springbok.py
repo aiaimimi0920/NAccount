@@ -13,6 +13,8 @@ from urllib.request import Request, urlopen
 import cloudflare as deploy
 import lifecycle
 import admin_bootstrap
+import repair
+from diagnostics import result_error
 from stack import ROOT, Stack, StackError, atomic_json, clean, git, read_json, scratch, write_json
 
 ERROR_CODES = {stage: f'NACCOUNT_{stage.upper().replace("-", "_")}_FAILED' for stage in (
@@ -25,11 +27,11 @@ def validated_request(value: dict, root: Path) -> dict:
     manifest = read_json(root / '.sba/manifest.json')
     fields = {'schemaVersion', 'taskId', 'action', 'repository', 'sourceSha', 'applicationId',
               'applicationVersion', 'environment', 'configuration', 'previous'}
-    if value.get('action') in ('preview', 'destroy-preview'):
+    if value.get('action') in ('preview', 'destroy-preview', 'repair'):
         fields.add('context')
     if set(value) != fields or value.get('schemaVersion') != 3:
         raise StackError('Invalid SBA request')
-    if value['action'] not in ('deploy', 'update', 'verify', 'preview', 'destroy-preview'):
+    if value['action'] not in ('deploy', 'update', 'verify', 'preview', 'destroy-preview', 'repair'):
         raise StackError('Unsupported SBA action')
     if value['repository'] != 'aiaimimi0920/NAccount':
         raise StackError('Unexpected repository')
@@ -57,11 +59,13 @@ def validated_request(value: dict, root: Path) -> dict:
         if not re.fullmatch(r'[a-f0-9]{40}', str(previous['sourceSha'])):
             raise StackError('Invalid previous source')
         old = version(previous['applicationVersion'])
-        if value['action'] in ('update', 'preview') and (current <= old or value['sourceSha'] == previous['sourceSha']):
+        if value['action'] in ('update', 'preview', 'repair') and (current <= old or value['sourceSha'] == previous['sourceSha']):
             raise StackError('Update requires a newer version')
         if value['action'] in ('verify', 'destroy-preview') and (current != old or value['sourceSha'] != previous['sourceSha']):
             raise StackError('Verify must target the deployed release')
     public_settings(value['configuration'], manifest)
+    if value['action'] == 'repair':
+        repair.validate_context(value)
     if value['action'] in ('preview', 'destroy-preview'):
         lifecycle.validate_context(value)
         if value['action'] == 'preview':
@@ -95,13 +99,16 @@ def database_query(settings: dict, sql: str, params: list) -> list:
     return response[0]['results']
 
 
-def configure_admin(settings: dict) -> tuple[dict, str]:
-    rows = database_query(settings, 'SELECT id,name,type,clientId,secret,redirectUris FROM app '
+def configure_admin(settings: dict, *, read_only: bool = False) -> tuple[dict, str]:
+    rows = database_query(settings, 'SELECT id,name,type,clientId,secret,redirectUris,isActive FROM app '
                           'WHERE deletedAt IS NULL AND name IN (?,?)', ['Admin Panel (SPA)', 'Admin Panel (S2S)'])
     spa = [row for row in rows if row['name'] == 'Admin Panel (SPA)' and row['type'] == 'spa']
     s2s = [row for row in rows if row['name'] == 'Admin Panel (S2S)' and row['type'] == 's2s']
     if len(rows) != 2 or len(spa) != 1 or len(s2s) != 1 or not s2s[0].get('secret'):
         raise StackError('Unique real admin clients required; no guessed IDs')
+    if read_only and any(row.get('isActive') != 1 or not isinstance(row.get('clientId'), str)
+                         or not row['clientId'] for row in rows):
+        raise StackError('Active existing admin clients required for repair')
     result = copy.deepcopy(settings)
     for field, row in [('spaClientId', spa[0]), ('s2sClientId', s2s[0])]:
         if result['admin'].get(field) and result['admin'][field] != row['clientId']:
@@ -117,6 +124,8 @@ def configure_admin(settings: dict) -> tuple[dict, str]:
             callbacks.append(uri)
     new = ','.join(callbacks)
     if old != new:
+        if read_only:
+            raise StackError('Existing admin callbacks required for repair; no database writes attempted')
         database_query(settings, 'UPDATE app SET redirectUris=? WHERE id=? AND redirectUris=? AND deletedAt IS NULL',
                        [new, spa[0]['id'], old])
         check = database_query(settings, 'SELECT redirectUris FROM app WHERE id=? AND deletedAt IS NULL', [spa[0]['id']])
@@ -125,7 +134,7 @@ def configure_admin(settings: dict) -> tuple[dict, str]:
     return result, s2s[0]['secret']
 
 
-def readiness(settings: dict) -> list[dict]:
+def readiness(settings: dict, *, admin_http: bool = True) -> list[dict]:
     checks = []
     # 使用真实的应用探针标识，避免默认 Python-urllib 被边缘规则拒绝；不携带凭据。
     headers = {'User-Agent': 'NAccount-SBA/2.0'}
@@ -137,10 +146,11 @@ def readiness(settings: dict) -> list[dict]:
         if key == 'keys' and not payload.get(key):
             raise StackError('JWKS empty')
         checks.append({'id': 'oidc-discovery' if key == 'issuer' else 'jwks-ready', 'passed': True})
-    with urlopen(Request(settings['admin']['url'], headers=headers), timeout=30) as response:
-        if response.status != 200:
-            raise StackError('Admin page not ready')
-    checks.append({'id': 'admin-http-ready', 'passed': True})
+    if admin_http:
+        with urlopen(Request(settings['admin']['url'], headers=headers), timeout=30) as response:
+            if response.status != 200:
+                raise StackError('Admin page not ready')
+        checks.append({'id': 'admin-http-ready', 'passed': True})
     return checks
 
 
@@ -164,6 +174,8 @@ def execute(value: dict, root: Path = ROOT, *, on_stage=lambda _stage, _writes: 
     on_stage('credentials', False)
     if os.environ.get('SBA_EXECUTE') != '1':
         raise StackError('Explicit SBA_EXECUTE=1 required')
+    if request['action'] == 'repair':
+        return repair.execute(request, settings, root, on_stage, configure_admin, readiness)
     if any(not os.environ.get(name) for name in ['CLOUDFLARE_API_TOKEN', *settings['server'].get('secretNames', [])]):
         raise StackError('Missing deployment credentials; no cloud writes attempted')
     if request['action'] == 'destroy-preview':
@@ -266,12 +278,12 @@ def main() -> int:
         if lifecycle_result is not None:
             result['lifecycle'] = lifecycle_result
         code = 0
-    except Exception:
+    except Exception as error:
         # 不输出原始异常：API、子进程或输入可能包含凭据。外部副作用不确定时不重试。
         possible_writes = progress['writes'] is not False
-        result.update(status='unknown' if possible_writes and os.environ.get('SBA_EXECUTE') == '1' and request.get('action') in ('deploy', 'update', 'preview', 'destroy-preview') else 'failed',
+        result.update(status='unknown' if possible_writes and os.environ.get('SBA_EXECUTE') == '1' and request.get('action') in ('deploy', 'update', 'preview', 'destroy-preview', 'repair') else 'failed',
                       checks=[] if possible_writes else [{'id': 'cloud-writes-not-started', 'passed': True}],
-                      errorCode=ERROR_CODES.get(progress['stage'], 'NACCOUNT_EXECUTION_FAILED'))
+                      errorCode=result_error(ERROR_CODES.get(progress['stage'], 'NACCOUNT_EXECUTION_FAILED'), error))
         print('NACCOUNT_EXECUTION_FAILED; preserve the runner diagnostics and do not replay cloud writes', file=sys.stderr)
         code = 1
     atomic_json(args.result, result)
