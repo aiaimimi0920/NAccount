@@ -110,15 +110,16 @@ class SecurityMigrationRepairTests(unittest.TestCase):
         releases={'server':self.root/'server-release','admin':self.root/'admin-release'}
         for role, release in releases.items():
             folder='server' if role=='server' else 'admin-panel'
-            write_json(release/'source'/folder/'wrangler.json',{'compatibility_date':'2025-01-01','compatibility_flags':[], 'vars':{'LABEL':'test','ENABLED':True}})
+            write_json(release/'source'/folder/'wrangler.json',{'compatibility_date':'2025-01-01','compatibility_flags':[], 'vars':{'LABEL':'test','ENABLED':True}, 'assets': {'directory': 'static', **({'binding': 'ASSETS'} if role == 'admin' else {})}})
         before={'workers':{'server':'old','admin':'old'},'domains':repair.digest({'server':['domain'],'admin':['domain']})}
-        for drift in ['none','text','json','assets','db','kv','secret','domain','date']:
+        for drift in ['none','text','json','assets','asset-binding','db','kv','secret','domain','date']:
             def worker(_settings,role):
                 bindings=[{'name':'LABEL','type':'plain_text','text':'bad' if drift=='text' else 'test'},
-                          {'name':'ENABLED','type':'json','json':drift!='json'}, {'name':'ASSETS','type':'assets'},
+                          {'name':'ENABLED','type':'json','json':drift!='json'},
                           {'name':'DB','type':'d1','database_id':'bad' if drift=='db' else 'db-id'},
                           {'name':'KV','type':'kv_namespace','namespace_id':'bad' if drift=='kv' else '2'*32},
                           {'name':'SERVER_CLIENT_SECRET','type':'plain_text' if drift=='secret' else 'secret_text'}]
+                if role == 'admin' and drift != 'asset-binding': bindings.append({'name':'ASSETS','type':'assets'})
                 return {'settings':{'compatibility_date':'' if drift=='date' else '2025-01-01','bindings':bindings},
                         'version':{'resources':{'script_runtime':{'assets':{'base_path':'' if drift=='assets' else '/'}}}}}
             with self.subTest(drift=drift), patch.object(repair,'domains',return_value=[]), \
