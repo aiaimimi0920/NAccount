@@ -1,6 +1,6 @@
 # 初始工程落地范围
 
-## NA-10-READINESS：3.2.2 只读收尾（进行中）
+## NA-10-READINESS：3.2.2 发布与只读收尾（完成，2026-10-10 UTC）
 
 负责人：主 AI。边界为修复发布后 assets 校验误报，通过 SpringBok 正式 repair
 只读核验已发布实例；不重做迁移、构建、Worker 发布、初始化或密码修改。
@@ -10,10 +10,20 @@
 OIDC/JWKS 通过；认证端仅声明 assets.directory，不声明 ASSETS binding，旧校验误套后台要求。
 修正后真实 published 配置核验通过。新增 readiness-only 固定该父任务、源码 generation
 及双 Worker version；保全检查仅覆盖新的只读区间，不追认旧回执或历史数据保全。
-3.2.2 与 3.2.1 业务补丁完全相同，仅部署校验变化；正式云端收尾及用户登录验收待完成。
+3.2.2 与 3.2.1 业务补丁完全相同，仅部署校验变化，不再次发布 Workers。
 本地完整主仓库 110 项测试、补丁 verify 与 diff 检查通过；独立只读审阅未发现新阻断。
+PR #13 两项 CI 及合并后 main CI 通过，发布标签 v3.2.2 固定
+`3cb2949d55dce347a902aee5c106a7cfe7c1809e`，远程 SHA 核对一致。
+从 SpringBok 正式控制台提交任务 `dc-d12d127cc7214f309eb44d33c393235c`，run
+`38023482072`；下载 artifact 并核对 ZIP SHA256，业务回执 succeeded，七项检查全部通过。
+控制台显示 v3.2.2 部署成功，升级/预升级测试/删除入口恢复；旧 unknown 历史保留。
+线上语言协商三项（中文、英文、显式优先）通过；用户确认已登录新版个人中心，浏览器核对
+账户名片与两种应用列表正常加载。Google/GitHub 当前未配置，账号页面邮箱状态未验证；
+不声称已完成第三方授权、真实投递、安全变更或 Access 后台的新一轮登录验收。
+证据位于 `linshi/naccount-user-center-20261009/repair-3.2.2-business-receipt.json`、
+`springbok-3.2.2-success.jpg`、`live-user-center.jpg` 和 `live-chinese-auth.jpg`。
 
-## NA-10-REPAIR：3.2.1 远程迁移修复（进行中）
+## NA-10-REPAIR：3.2.1 远程迁移修复（已执行，历史 unknown 保留）
 
 3.2.0 已由 PR #11 合并并发布，main `a8621252ab167e70f4abae6896cc7458faf17235` 检查通过。
 SpringBok update `dc-2e367ed28ec944c1943b58fa695ff40e` / run `38019349330` 失败为
@@ -26,7 +36,7 @@ SpringBok update `dc-2e367ed28ec944c1943b58fa695ff40e` / run `38019349330` 失�
 只读审阅发现 portal callback 额外值可能被 publish 改写，已改为精确预检和发布只读模式，补拒绝测试。
 该修复已执行，但收尾校验失败，最新现场及接续方案见上；原失败记录不修改、不清锁、不 rerun。
 
-## NA-10-RELEASE：3.2.0 发布（进行中）
+## NA-10-RELEASE：3.2.0 发布（已发布，升级由上方修复收尾）
 
 负责人：主 AI。用户已授权提交推送 GitHub，并通过 SpringBok 更新现有实例。
 范围包括 NA-10 用户中心、安全流程与中文认证，不重建数据库、不初始化管理员、不改密码。
@@ -36,7 +46,7 @@ SpringBok update `dc-2e367ed28ec944c1943b58fa695ff40e` / run `38019349330` 失�
 100 项及版本调整后 SBA 子套件 84 项通过。定制提交 `858eccd4add4bc3873f4835cf9d21d54b543094c`，
 导出 generation `91f42ab6b29e379353b79bf907cdb529fdea06f5b8e1bbadbaf8e882c5def88b`，verify 通过。
 新增语言覆盖后重新全量复验，同步系统信息测试的中文配置预期，不改变业务断言。
-GitHub CI、合并和线上执行结果随后记录；发布前 SpringBok 确认现有实例为 3.1.0。
+PR #11 及 main CI 通过后已发布；首次线上升级失败，结果和后续恢复见上方两节。
 以下“未发布”段落为各开发阶段的历史状态，最终交付以本节及发布记录为准。
 
 ## NA-10-S02/S03：用户中心完整安全流程（本地开发与验证完成，未发布）
