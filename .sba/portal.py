@@ -6,7 +6,7 @@ CLIENT_NAME = 'NAccount User Portal (SPA)'
 SCOPES = {'openid', 'profile', 'offline_access'}
 
 
-def configure(settings, query, *, preview=False):
+def configure(settings, query, *, preview=False, read_only=False):
     rows = query(settings, 'SELECT id,name,type,clientId,redirectUris,isActive,deletedAt FROM app WHERE name=? OR clientId=?', [CLIENT_NAME, CLIENT_ID])
     if len(rows) != 1 or any(rows[0].get(k) != v for k, v in {'name': CLIENT_NAME, 'type': 'spa', 'clientId': CLIENT_ID, 'deletedAt': None}.items()):
         raise StackError('Unique migrated portal client required')
@@ -18,6 +18,8 @@ def configure(settings, query, *, preview=False):
         raise StackError('Portal must have exactly the three ordinary-user scopes')
     expected = settings['server']['url'] + '/account'
     if row['redirectUris'] != expected or row['isActive'] != 1:
+        if read_only:
+            raise StackError('Existing exact portal callback required; no repair writes allowed')
         query(settings, 'UPDATE app SET redirectUris=?,isActive=1 WHERE id=? AND redirectUris=? AND isActive=? AND deletedAt IS NULL',
               [expected, row['id'], row['redirectUris'], row['isActive']])
     check = query(settings, 'SELECT clientId,redirectUris,isActive FROM app WHERE id=? AND deletedAt IS NULL', [row['id']])

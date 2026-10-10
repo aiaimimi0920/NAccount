@@ -1,0 +1,49 @@
+{
+  "schemaVersion": 1,
+  "configSha256": "be91c65e3ce84e0b08e19a266c88187a892fe8c51a20eb89b56415826c11ce11",
+  "base": "290efee29e4ff7329804530c61880c9c5d36e7fb",
+  "head": "e070108ab9ab93e6bd45dca4059c47a2f192fb7b",
+  "tree": "ad1914543fe0ff9d68bcbc58d5b0fc3c87d9df43",
+  "patches": [
+    {
+      "commit": "67c0882f81bb25cd2cfb8ff18dca25a83506b36f",
+      "topic": "cloudflare-email",
+      "file": "patches/0001-cloudflare-email.patch"
+    },
+    {
+      "commit": "7abb0ca388449b3990c39872ae655f0197280b23",
+      "topic": "admin-loading",
+      "file": "patches/0002-admin-loading.patch"
+    },
+    {
+      "commit": "2774512cf4eb50bd0a51120e5d896dab425cd2ee",
+      "topic": "user-portal",
+      "file": "patches/0003-user-portal.patch"
+    },
+    {
+      "commit": "eaa8557390f6ba6d54e5a7cda27b27c1593e17a7",
+      "topic": "user-portal",
+      "file": "patches/0004-user-portal.patch"
+    },
+    {
+      "commit": "858eccd4add4bc3873f4835cf9d21d54b543094c",
+      "topic": "user-portal",
+      "file": "patches/0005-user-portal.patch"
+    },
+    {
+      "commit": "e070108ab9ab93e6bd45dca4059c47a2f192fb7b",
+      "topic": "user-portal",
+      "file": "patches/0006-user-portal.patch"
+    }
+  ],
+  "files": {
+    "patches/0001-cloudflare-email.patch": "2716772c98f5a679bcd49045574d4993de9c6c5e5e2cbcad2ed52d3426358f70",
+    "patches/0002-admin-loading.patch": "caa310dc41c6654cfe72c46aa7083ff525bcb4cb520e20204f27a67dd95eb402",
+    "patches/0003-user-portal.patch": "9ae30f13f45f23fb5894f4837af5bacbb86aff39fe1a38765a22a9cda1c37cb3",
+    "patches/0004-user-portal.patch": "b26ee0626e7913529023f0ce30e46b37d5a862214a34b53ad54a1d07b5189054",
+    "patches/0005-user-portal.patch": "5ea06cd340e1c8ada151678ec53d68648189b5dbf12e9c4bdeb43e0cf24a588e",
+    "patches/0006-user-portal.patch": "44b0a5bb9c4aaf4a5bd062560033bd8ddc9d53447edf0f3b7438c934be2a9281",
+    "series.txt": "0f8ecff1d7c3fe5441ba4a49d1000eabfa68419eda19894100635de8bb3e9166",
+    "personal-history.bundle": "ebbf8f0d73a4dc520bf59fbbc3382fd0be637524d26504729c00dcee689596f6"
+  }
+}

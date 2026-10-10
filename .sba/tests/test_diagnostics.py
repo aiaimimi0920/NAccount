@@ -86,7 +86,7 @@ class DiagnosticsTests(unittest.TestCase):
 
     def test_diagnostic_module_is_inside_build_hash_fence(self):
         temp = scratch('naccount-diagnostic-hash-')
-        for name in ['cloudflare.py', 'lifecycle.py', 'springbok.py', 'repair.py', 'portal.py', 'diagnostics.py', 'admin_bootstrap.py', 'admin_bootstrap.mjs']:
+        for name in ['cloudflare.py', 'lifecycle.py', 'springbok.py', 'repair.py', 'security_migration_repair.py', 'portal.py', 'diagnostics.py', 'admin_bootstrap.py', 'admin_bootstrap.mjs']:
             (temp / name).write_text('fixture', encoding='utf-8')
         with patch.object(deploy, '__file__', str(temp / 'cloudflare.py')):
             before = deploy.deployment_tools_hash()

@@ -9,4 +9,5 @@
 - 不自动创建 Cloudflare 资源、不自动升级上游、不自动轮换既有签名/会话密钥。失败时保留 release、发布日志和数据库备份；不自动回滚数据库或重试外部写入。
 - SpringBok 按声明创建新实例资源；应用 v3 只消费精确资源 ID。preview 从一致 D1 导出复制数据，独立新建认证状态，不复制 KV 会话/锁定/MFA。清理只允许通过 v3 context 绑定的测试实例，不能按前缀扫账户。
 - 程序调用使用 `--json`，以退出码和 stdout 中单个 JSON 对象判断已解析动作的结果；参数语法错误可能只有 stderr 和非零退出码。stderr 是供人排障的日志，不作为稳定协议。`state=deployed-unverified` 只表示命令完成，不能代表注册、登录和邮件等业务验收通过。
+- `security-migration` repair 仅处理已固定的 3.2.0 远程0050迁移失败；全部限定条件见 README。不能把它扩展成通用重试或把 admin-publish 的“不迁移”边界套用于此动作；两个动作均不得重放父任务。
 - 修改本目录编排脚本后运行 `python -m unittest discover -s tests -v`。测试放在 `.sba/tests/`，根目录 `tests/test_sba.py` 只负责标准测试发现。源码、注释和文档使用 UTF-8 无 BOM。

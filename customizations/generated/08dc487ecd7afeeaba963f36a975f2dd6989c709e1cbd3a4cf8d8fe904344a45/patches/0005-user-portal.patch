@@ -1,0 +1,2956 @@
+From 858eccd4add4bc3873f4835cf9d21d54b543094c Mon Sep 17 00:00:00 2001
+From: aiaimimi0920 <153103332+aiaimimi0920@users.noreply.github.com>
+Date: Fri, 9 Oct 2026 19:49:00 -0700
+Subject: [PATCH] feat(NA-10): deliver user center security flows and browser
+ locale
+
+NAccount-Patch-Topic: user-portal
+---
+ .../sqlite/0049_naccount_profile.sql          |   5 +
+ .../sqlite/0050_naccount_security.sql         |  82 ++++++++
+ .../__tests__/normal/account-epoch.test.ts    |  65 ++++++
+ .../__tests__/normal/account-profile.test.ts  |  76 +++++++
+ .../__tests__/normal/account-security.test.ts | 194 ++++++++++++++++++
+ .../normal/embedded/email-mfa.test.ts         |   2 +-
+ .../__tests__/normal/embedded/otp-mfa.test.ts |   2 +-
+ .../__tests__/normal/embedded/sms-mfa.test.ts |   2 +-
+ .../normal/identity-main/logout.test.ts       |   1 +
+ .../normal/identity-mfa/email-mfa.test.ts     |   2 +-
+ .../normal/identity-mfa/otp-mfa.test.ts       |   4 +-
+ .../normal/identity-mfa/sms-mfa.test.ts       |   2 +-
+ server/src/__tests__/normal/oauth.test.ts     |  16 +-
+ server/src/__tests__/normal/other.test.ts     |   2 +-
+ server/src/__tests__/normal/s2s/app.test.ts   |  38 ++--
+ server/src/__tests__/normal/s2s/user.test.ts  |   2 +
+ server/src/configs/type.ts                    |   6 +-
+ server/src/handlers/embedded.ts               |   5 +
+ server/src/handlers/identity/main.ts          |   3 +
+ server/src/handlers/identity/mfa.ts           |   5 +
+ server/src/handlers/identity/passkey.ts       |   4 +
+ server/src/handlers/identity/passwordless.ts  |   3 +
+ server/src/handlers/identity/policy.ts        |  10 +
+ server/src/handlers/identity/recoveryCode.ts  |   2 +
+ server/src/handlers/identity/view.tsx         |   2 +
+ server/src/handlers/oauth.tsx                 |   2 +-
+ server/src/handlers/user.ts                   |   5 +-
+ server/src/models/user.ts                     |   1 +
+ server/src/pages/account/Account.test.tsx     |  17 +-
+ server/src/pages/account/Account.tsx          | 145 +++++++------
+ .../src/pages/account/Applications.test.tsx   |  30 +++
+ server/src/pages/account/Applications.tsx     |  38 ++++
+ server/src/pages/account/Dialog.tsx           |  26 +++
+ server/src/pages/account/Icons.tsx            |  17 ++
+ server/src/pages/account/InlineEdit.test.tsx  |  46 +++++
+ server/src/pages/account/InlineEdit.tsx       |  37 ++++
+ .../src/pages/account/SecurityDialog.test.tsx |  86 ++++++++
+ server/src/pages/account/SecurityDialog.tsx   | 122 +++++++++++
+ .../src/pages/account/SocialAccounts.test.tsx |  19 +-
+ server/src/pages/account/SocialAccounts.tsx   |  84 ++++----
+ server/src/pages/account/assets.d.ts          |   4 +
+ server/src/pages/account/auth.test.ts         |   2 +-
+ server/src/pages/account/auth.ts              |   8 +-
+ server/src/pages/account/beaver.svg           |   5 +
+ server/src/pages/account/portal.css           |  33 +++
+ server/src/routes/account.tsx                 |  24 ++-
+ server/src/services/accountEpoch.ts           |  12 ++
+ server/src/services/accountProfile.ts         |  62 ++++++
+ server/src/services/accountSecurity.ts        | 186 +++++++++++++++++
+ server/src/services/accountSocial.ts          |   4 +-
+ server/src/services/identity.ts               |  10 +-
+ server/src/services/jwt.ts                    |   8 +
+ server/src/services/kv.ts                     |   6 +
+ server/src/services/mfa.ts                    |   9 +-
+ server/src/services/oauth.ts                  |   6 +-
+ server/src/services/session.ts                |   5 +-
+ server/src/tests/mock.ts                      |   2 +-
+ server/src/utils/request.test.ts              |  28 ++-
+ server/src/utils/request.ts                   |  27 ++-
+ server/vite.config.ts                         |   7 +
+ server/wrangler.toml                          |   2 +-
+ 61 files changed, 1492 insertions(+), 168 deletions(-)
+ create mode 100644 server/migrations/sqlite/0049_naccount_profile.sql
+ create mode 100644 server/migrations/sqlite/0050_naccount_security.sql
+ create mode 100644 server/src/__tests__/normal/account-epoch.test.ts
+ create mode 100644 server/src/__tests__/normal/account-profile.test.ts
+ create mode 100644 server/src/__tests__/normal/account-security.test.ts
+ create mode 100644 server/src/pages/account/Applications.test.tsx
+ create mode 100644 server/src/pages/account/Applications.tsx
+ create mode 100644 server/src/pages/account/Dialog.tsx
+ create mode 100644 server/src/pages/account/Icons.tsx
+ create mode 100644 server/src/pages/account/InlineEdit.test.tsx
+ create mode 100644 server/src/pages/account/InlineEdit.tsx
+ create mode 100644 server/src/pages/account/SecurityDialog.test.tsx
+ create mode 100644 server/src/pages/account/SecurityDialog.tsx
+ create mode 100644 server/src/pages/account/assets.d.ts
+ create mode 100644 server/src/pages/account/beaver.svg
+ create mode 100644 server/src/pages/account/portal.css
+ create mode 100644 server/src/services/accountEpoch.ts
+ create mode 100644 server/src/services/accountProfile.ts
+ create mode 100644 server/src/services/accountSecurity.ts
+
+diff --git a/server/migrations/sqlite/0049_naccount_profile.sql b/server/migrations/sqlite/0049_naccount_profile.sql
+new file mode 100644
+index 0000000000000000000000000000000000000000..f38b7f4eb89f507f612a79b8515b2e80a7f69780
+--- /dev/null
++++ b/server/migrations/sqlite/0049_naccount_profile.sql
+@@ -0,0 +1,5 @@
++CREATE TABLE naccount_profile (
++  userId INTEGER PRIMARY KEY REFERENCES user(id),
++  nickname TEXT NOT NULL DEFAULT '' CHECK(length(nickname) <= 40),
++  signature TEXT NOT NULL DEFAULT '' CHECK(length(signature) <= 120)
++);
+diff --git a/server/migrations/sqlite/0050_naccount_security.sql b/server/migrations/sqlite/0050_naccount_security.sql
+new file mode 100644
+index 0000000000000000000000000000000000000000..78bdfe6fb2d9e1a66bd1de716de396552e45c411
+--- /dev/null
++++ b/server/migrations/sqlite/0050_naccount_security.sql
+@@ -0,0 +1,82 @@
++ALTER TABLE user ADD COLUMN securityVersion INTEGER NOT NULL DEFAULT 0;
++ALTER TABLE naccount_profile ADD COLUMN phone TEXT;
++CREATE UNIQUE INDEX naccount_contact_phone_unique ON naccount_profile(phone) WHERE phone IS NOT NULL;
++
++CREATE TABLE naccount_security_request (
++  id TEXT PRIMARY KEY,
++  userId INTEGER NOT NULL REFERENCES user(id),
++  version INTEGER NOT NULL,
++  action TEXT NOT NULL CHECK(action IN ('email','phone','password','otp-enable','otp-disable','delete')),
++  target TEXT NOT NULL DEFAULT '',
++  guard TEXT NOT NULL,
++  payload TEXT NOT NULL DEFAULT '{}',
++  proofs TEXT NOT NULL DEFAULT '{}',
++  tokenHash TEXT NOT NULL,
++  createdAt INTEGER NOT NULL,
++  expiresAt INTEGER NOT NULL,
++  attempts INTEGER NOT NULL DEFAULT 0,
++  ready INTEGER NOT NULL DEFAULT 0,
++  used INTEGER NOT NULL DEFAULT 0
++);
++CREATE INDEX naccount_security_user_time ON naccount_security_request(userId,createdAt);
++CREATE INDEX naccount_security_target_time ON naccount_security_request(target,createdAt);
++CREATE TABLE naccount_security_limit (bucket TEXT PRIMARY KEY, count INTEGER NOT NULL, expiresAt INTEGER NOT NULL);
++CREATE TABLE naccount_otp_use (userId INTEGER NOT NULL, secretHash TEXT NOT NULL, step INTEGER NOT NULL, PRIMARY KEY(userId,secretHash,step));
++
++-- Validation and application share one SQLite transaction. A failed trigger rolls back consumption.
++CREATE TRIGGER naccount_security_apply BEFORE UPDATE OF used ON naccount_security_request
++WHEN NEW.used=1 AND OLD.used=0
++BEGIN
++  SELECT CASE WHEN OLD.ready<>1 OR OLD.attempts>5 OR OLD.expiresAt<=CAST(strftime('%s','now') AS INTEGER)*1000
++    THEN RAISE(ABORT,'security_request_invalid') END;
++  SELECT CASE WHEN NOT EXISTS (SELECT 1 FROM user WHERE id=OLD.userId AND isActive=1 AND deletedAt IS NULL AND securityVersion=OLD.version
++    AND COALESCE(password,'')=json_extract(OLD.guard,'$.password')
++    AND COALESCE(email,'')=json_extract(OLD.guard,'$.email')
++    AND otpSecret=json_extract(OLD.guard,'$.otpSecret')
++    AND mfaTypes=json_extract(OLD.guard,'$.mfaTypes')
++    AND emailVerified=json_extract(OLD.guard,'$.emailVerified')
++    AND otpVerified=json_extract(OLD.guard,'$.otpVerified')
++    AND COALESCE(smsPhoneNumber,'')=json_extract(OLD.guard,'$.smsPhoneNumber')
++    AND smsPhoneNumberVerified=json_extract(OLD.guard,'$.smsPhoneNumberVerified')
++    AND COALESCE(recoveryCodeHash,'')=json_extract(OLD.guard,'$.recoveryCodeHash'))
++    THEN RAISE(ABORT,'security_owner_changed') END;
++  SELECT CASE WHEN OLD.action='email' AND EXISTS(SELECT 1 FROM user WHERE id<>OLD.userId AND deletedAt IS NULL AND lower(trim(email))=OLD.target)
++    THEN RAISE(ABORT,'security_email_unavailable') END;
++  SELECT CASE WHEN OLD.action='delete' AND EXISTS(SELECT 1 FROM user_role ur JOIN role r ON r.id=ur.roleId WHERE ur.userId=OLD.userId AND ur.deletedAt IS NULL AND r.name='super_admin' AND r.deletedAt IS NULL)
++    AND NOT EXISTS(SELECT 1 FROM user_role ur JOIN role r ON r.id=ur.roleId JOIN user u ON u.id=ur.userId WHERE u.id<>OLD.userId AND u.isActive=1 AND u.deletedAt IS NULL AND ur.deletedAt IS NULL AND r.name='super_admin' AND r.deletedAt IS NULL)
++    THEN RAISE(ABORT,'security_last_admin') END;
++
++  UPDATE user SET
++    email=CASE WHEN OLD.action='email' THEN OLD.target WHEN OLD.action='delete' THEN NULL ELSE email END,
++    emailVerified=CASE WHEN OLD.action='email' THEN 1 WHEN OLD.action='delete' THEN 0 ELSE emailVerified END,
++    password=CASE WHEN OLD.action='password' THEN json_extract(OLD.payload,'$.password') WHEN OLD.action='delete' THEN NULL ELSE password END,
++    otpSecret=CASE WHEN OLD.action='otp-enable' THEN json_extract(OLD.payload,'$.secret') WHEN OLD.action IN ('otp-disable','delete') THEN '' ELSE otpSecret END,
++    otpVerified=CASE WHEN OLD.action='otp-enable' THEN 1 WHEN OLD.action IN ('otp-disable','delete') THEN 0 ELSE otpVerified END,
++    mfaTypes=CASE WHEN OLD.action IN ('otp-enable','otp-disable') THEN json_extract(OLD.payload,'$.mfaTypes') WHEN OLD.action='delete' THEN '' ELSE mfaTypes END,
++    recoveryCodeHash=CASE WHEN OLD.action='otp-enable' THEN json_extract(OLD.payload,'$.recoveryHash') WHEN OLD.action IN ('otp-disable','delete') THEN NULL ELSE recoveryCodeHash END,
++    firstName=CASE WHEN OLD.action='delete' THEN NULL ELSE firstName END,
++    lastName=CASE WHEN OLD.action='delete' THEN NULL ELSE lastName END,
++    linkedAuthId=CASE WHEN OLD.action='delete' THEN NULL ELSE linkedAuthId END,
++    invitationToken=CASE WHEN OLD.action='delete' THEN NULL ELSE invitationToken END,
++    invitationExpiresAt=CASE WHEN OLD.action='delete' THEN NULL ELSE invitationExpiresAt END,
++    orgSlug=CASE WHEN OLD.action='delete' THEN '' ELSE orgSlug END,
++    smsPhoneNumber=CASE WHEN OLD.action='delete' THEN NULL ELSE smsPhoneNumber END,
++    smsPhoneNumberVerified=CASE WHEN OLD.action='delete' THEN 0 ELSE smsPhoneNumberVerified END,
++    isActive=CASE WHEN OLD.action='delete' THEN 0 ELSE isActive END,
++    deletedAt=CASE WHEN OLD.action='delete' THEN CURRENT_TIMESTAMP ELSE deletedAt END,
++    securityVersion=securityVersion+1, updatedAt=CURRENT_TIMESTAMP
++    WHERE id=OLD.userId;
++  INSERT INTO naccount_profile(userId,phone) SELECT OLD.userId,OLD.target WHERE OLD.action='phone'
++    ON CONFLICT(userId) DO UPDATE SET phone=excluded.phone;
++  DELETE FROM naccount_profile WHERE userId=OLD.userId AND OLD.action='delete';
++  DELETE FROM user_app_consent WHERE userId=OLD.userId AND OLD.action='delete';
++  DELETE FROM user_passkey WHERE userId=OLD.userId AND OLD.action='delete';
++  DELETE FROM user_attribute_value WHERE userId=OLD.userId AND OLD.action='delete';
++  DELETE FROM user_role WHERE userId=OLD.userId AND OLD.action='delete';
++  DELETE FROM user_org WHERE userId=OLD.userId AND OLD.action='delete';
++  DELETE FROM user_org_group WHERE userId=OLD.userId AND OLD.action='delete';
++  DELETE FROM naccount_link_request WHERE userId=OLD.userId;
++  UPDATE naccount_social_identity SET label='' WHERE userId=OLD.userId AND OLD.action='delete';
++  UPDATE naccount_security_request SET guard='{}',payload='{}',proofs='{}',tokenHash='',ready=0
++    WHERE userId=OLD.userId AND id<>OLD.id;
++END;
+diff --git a/server/src/__tests__/normal/account-epoch.test.ts b/server/src/__tests__/normal/account-epoch.test.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..5782a4ad6122b9e3ba6341973accfa83468b56da
+--- /dev/null
++++ b/server/src/__tests__/normal/account-epoch.test.ts
+@@ -0,0 +1,65 @@
++import { beforeEach, afterEach, describe, expect, it } from 'vitest'
++import { Context } from 'hono'
++import { ClientType } from '@melody-auth/shared'
++import { Database } from 'better-sqlite3'
++import { migrate, mock, session } from 'tests/mock'
++import { jwtService, kvService, oauthService, identityService, sessionService } from 'services'
++import { userModel } from 'models'
++import { typeConfig } from 'configs'
++import { timeUtil } from 'utils'
++import { getAuthCodeBody } from 'handlers/identity/mfa'
++let db: Database
++let c: Context<typeConfig.Context>
++beforeEach(async()=>{
++  db=await migrate()
++  db.prepare("INSERT INTO user(authId,email,otpSecret) VALUES('epoch-user','epoch@example.test','')").run()
++  c=new Context(new Request('http://localhost:8787'),{env:{...process.env,...mock(db),SERVER_SESSION_EXPIRES_IN:3600}})
++  c.set('session',session as never)
++})
++afterEach(()=>db.close())
++const snapshot=async()=> (await userModel.getByAuthId(c.env.DB,'epoch-user'))!
++const revoke=()=>db.prepare("UPDATE user SET securityVersion=securityVersion+1 WHERE authId='epoch-user'").run()
++describe('user security epoch',()=>{
++  it('rejects old signed access JWT and accepts a freshly authenticated version',async()=>{
++    const original=await jwtService.genAccessToken(c,ClientType.SPA,timeUtil.getCurrentTimestamp(),'epoch-user','portal','profile')
++    expect((await jwtService.getAccessTokenBody(c,original.accessToken)).securityVersion).toBe(0)
++    revoke()
++    await expect(jwtService.getAccessTokenBody(c,original.accessToken)).rejects.toThrow('ACCOUNT_SESSION_REVOKED')
++    await expect(jwtService.genAccessToken(c,ClientType.SPA,timeUtil.getCurrentTimestamp(),'epoch-user','portal','profile')).rejects.toThrow()
++    const fresh=await jwtService.genAccessToken(c,ClientType.SPA,timeUtil.getCurrentTimestamp(),'epoch-user','portal','profile',[],undefined,1)
++    expect((await jwtService.getAccessTokenBody(c,fresh.accessToken)).securityVersion).toBe(1)
++  })
++  it('does not treat service tokens as user sessions',async()=>{
++    const result=await jwtService.genAccessToken(c,ClientType.S2S,timeUtil.getCurrentTimestamp(),'service','service','read_user')
++    expect((await jwtService.getAccessTokenBody(c,result.accessToken)).tokenType).toBe('service')
++  })
++  it('refuses old refresh tokens without minting a new version',async()=>{
++    await kvService.storeRefreshToken(c.env.KV,'epoch-refresh',{authId:'epoch-user',clientId:'portal',scope:'profile',roles:[],securityVersion:0,expiredAt:timeUtil.getCurrentTimestamp()+3600},3600)
++    revoke()
++    await expect(oauthService.handleRefreshTokenTokenExchange(c,{refreshToken:'epoch-refresh'} as never)).rejects.toThrow()
++  })
++  it('invalidates SSO cookies and already-secured authorization codes',async()=>{
++    const body={user:await snapshot(),request:{clientId:'portal'},isSecured:true} as typeConfig.AuthCodeBody
++    sessionService.setAuthInfoSession(c,body)
++    expect(await sessionService.getAuthInfoSession(c,'portal')).toBeTruthy()
++    await kvService.storeAuthCode(c.env.KV,'epoch-code',body,600)
++    revoke()
++    expect(await sessionService.getAuthInfoSession(c,'portal')).toBeNull()
++    await expect(identityService.ensureAuthCodeIsSecured(c,'epoch-code',body)).rejects.toThrow('ACCOUNT_SESSION_REVOKED')
++    await expect(getAuthCodeBody(c,'epoch-code')).rejects.toThrow('ACCOUNT_SESSION_REVOKED')
++  })
++  it('rejects disabled and deleted users even when versions match',async()=>{
++    const token=await jwtService.genAccessToken(c,ClientType.SPA,timeUtil.getCurrentTimestamp(),'epoch-user','portal','profile')
++    db.prepare('UPDATE user SET isActive=0').run()
++    await expect(jwtService.getAccessTokenBody(c,token.accessToken)).rejects.toThrow()
++    db.prepare('UPDATE user SET isActive=1,deletedAt=CURRENT_TIMESTAMP').run()
++    await expect(jwtService.getAccessTokenBody(c,token.accessToken)).rejects.toThrow()
++  })
++  it('binds remembered device proofs to the authenticated version',async()=>{
++    await kvService.storeOtpMfaRememberDevice(c.env.KV,1,'0.fixture','proof')
++    expect(await kvService.verifyOtpMfaRememberDevice(c.env.KV,1,'0.fixture-proof',0)).toBeTruthy()
++    expect(await kvService.verifyOtpMfaRememberDevice(c.env.KV,1,'0.fixture-proof',1)).toBe(false)
++    await kvService.storeOtpMfaRememberDevice(c.env.KV,1,'1.fixture','proof')
++    expect(await kvService.verifyOtpMfaRememberDevice(c.env.KV,1,'1.fixture-proof',1)).toBeTruthy()
++  })
++})
+\ No newline at end of file
+diff --git a/server/src/__tests__/normal/account-profile.test.ts b/server/src/__tests__/normal/account-profile.test.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..b9c0ace35dd876fcd4a8433f342352ec0accdc68
+--- /dev/null
++++ b/server/src/__tests__/normal/account-profile.test.ts
+@@ -0,0 +1,76 @@
++import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
++import { Database } from 'better-sqlite3'
++import { migrate, mock } from 'tests/mock'
++import { typeConfig } from 'configs'
++import { jwtService } from 'services'
++import account from 'routes/account'
++
++let db: Database
++let env: typeConfig.Bindings
++beforeEach(async () => {
++  db = await migrate()
++  db.prepare('INSERT INTO user(authId,email,password,emailVerified,otpSecret,firstName) VALUES(?,?,?,?,?,?)').run('owner','owner@example.test','private-password-hash',1,'private-otp','Original')
++  db.prepare('INSERT INTO user(authId,email,otpSecret) VALUES(?,?,?)').run('other','other@example.test','other-otp')
++  db.prepare('UPDATE app SET redirectUris=? WHERE clientId=?').run('https://auth.example.test/account','naccount-user-portal')
++  env = { ...process.env, ...mock(db), AUTH_SERVER_URL:'https://auth.example.test', NACCOUNT_PORTAL_CLIENT_ID:'naccount-user-portal', PG_CONNECTION_STRING:'' } as unknown as typeConfig.Bindings
++  vi.spyOn(jwtService,'getAccessTokenBody').mockImplementation(async (_c, token) => {
++    if (!['owner','other','wrong-client','no-profile'].includes(token)) return null as any
++    return { sub:token === 'other' ? 'other' : 'owner', azp:token === 'wrong-client' ? 'admin-client' : 'naccount-user-portal', scope:token === 'no-profile' ? 'openid' : 'openid profile' } as typeConfig.AccessTokenBody
++  })
++})
++afterEach(() => { db.close(); vi.restoreAllMocks() })
++const get = (path='/account/api/profile', token='owner') => account.request(path,{headers:{Authorization:'Bearer '+token}},env)
++const patch = (body: unknown, token='owner') => account.request('/account/api/profile', {
++  method:'PATCH', headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},body:JSON.stringify(body),
++},env)
++
++describe('portal profile and catalogue (D1)', () => {
++  it('exposes an explicit safe DTO, not secrets or unverified phone numbers', async () => {
++    db.prepare('UPDATE user SET smsPhoneNumber=?,smsPhoneNumberVerified=0').run('+12025550147')
++    const response = await get()
++    expect(response.status).toBe(200)
++    const body = await response.json()
++    expect(body).toMatchObject({authId:'owner',nickname:'Original',signature:'',phone:null,otpEnabled:false,canEdit:true})
++    expect(Object.keys(body as object).sort()).toEqual(['authId','email','emailVerified','nickname','signature','phone','otpEnabled','canEdit','canUsePolicies'].sort())
++    expect(JSON.stringify(body)).not.toContain('private-')
++  })
++  it('persists nickname/signature independently without rewriting names or other users', async () => {
++    expect((await patch({nickname:'测试昵称'})).status).toBe(200)
++    expect((await patch({signature:'真实保存的签名'})).status).toBe(200)
++    expect(await (await get()).json()).toMatchObject({nickname:'测试昵称',signature:'真实保存的签名'})
++    expect(await (await get('/account/api/profile','other')).json()).toMatchObject({nickname:'',signature:''})
++    expect(db.prepare('SELECT firstName FROM user WHERE authId=?').get('owner')).toEqual({firstName:'Original'})
++    expect((await patch({signature:''})).status).toBe(200)
++  })
++  it.each([{nickname:''},{nickname:'x'.repeat(41)},{signature:'x'.repeat(121)},{nickname:' x'}, {signature:'line\nbreak'}, {authId:'other'}, {nickname:'x',authId:'other'}, null, [], {signature:42}])('rejects invalid or identity-controlling input %j', async (body) => {
++    expect((await patch(body)).status).not.toBe(200)
++    expect(db.prepare('SELECT COUNT(*) AS count FROM naccount_profile').get()).toEqual({count:0})
++  })
++  it.each(['wrong-client','no-profile','invalid'])('rejects inappropriate token %s on all surfaces', async (token) => {
++    expect((await get('/account/api/profile',token)).status).not.toBe(200)
++    expect((await get('/account/api/apps',token)).status).not.toBe(200)
++    expect((await patch({nickname:'x'},token)).status).not.toBe(200)
++  })
++  it.each(['user-disabled','user-deleted','client-disabled','policy-blocked','pg'])('fails closed for %s', async (kind) => {
++    if(kind==='user-disabled') db.prepare('UPDATE user SET isActive=0 WHERE authId=?').run('owner')
++    if(kind==='user-deleted') db.prepare('UPDATE user SET deletedAt=CURRENT_TIMESTAMP WHERE authId=?').run('owner')
++    if(kind==='client-disabled') db.prepare('UPDATE app SET isActive=0 WHERE clientId=?').run('naccount-user-portal')
++    if(kind==='policy-blocked') env.BLOCKED_POLICIES=['update_info']
++    if(kind==='pg') env.PG_CONNECTION_STRING='unsupported'
++    expect((await patch({nickname:'x'})).status).not.toBe(200)
++  })
++  it('rejects oversized bodies before a write', async () => { expect((await patch({signature:'x'.repeat(3000)})).status).toBe(413) })
++  it('lists only own consent and explicitly public active SPA apps, without credentials or callbacks', async () => {
++    db.prepare('INSERT INTO app(name,type,clientId,secret,redirectUris) VALUES(?,?,?,?,?)').run('Owned','spa','owned','private-secret','https://private.example/callback')
++    db.prepare('INSERT INTO app(name,type,clientId) VALUES(?,?,?)').run('Public','spa','public')
++    db.prepare('INSERT INTO app(name,type,clientId) VALUES(?,?,?)').run('Internal','spa','internal')
++    db.prepare('INSERT INTO app(name,type,clientId) VALUES(?,?,?)').run('Service','s2s','service')
++    db.prepare('INSERT INTO user_app_consent(userId,appId,scopes) SELECT user.id, app.id, ? FROM user,app WHERE user.authId=? AND app.clientId=?').run('[]','owner','owned')
++    env.NACCOUNT_PUBLIC_APP_IDS=['public','service','naccount-user-portal','public']
++    const response=await get('/account/api/apps')
++    expect(await response.json()).toEqual({apps:[{clientId:'owned',name:'Owned',authorized:true},{clientId:'public',name:'Public',authorized:false}]})
++    expect(await (await get('/account/api/apps','other')).json()).toEqual({apps:[{clientId:'public',name:'Public',authorized:false}]})
++    db.prepare('UPDATE app SET isActive=0 WHERE clientId=?').run('owned')
++    expect(JSON.stringify(await (await get('/account/api/apps')).json())).not.toContain('Owned')
++  })
++})
+diff --git a/server/src/__tests__/normal/account-security.test.ts b/server/src/__tests__/normal/account-security.test.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..7705e03a26eeb17a3fcc88b1cb6988142315c26b
+--- /dev/null
++++ b/server/src/__tests__/normal/account-security.test.ts
+@@ -0,0 +1,194 @@
++import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
++import { Database } from 'better-sqlite3'
++import { migrate, mock } from 'tests/mock'
++import { typeConfig } from 'configs'
++import { jwtService, emailService, smsService } from 'services'
++import { cryptoUtil } from 'utils'
++import account from 'routes/account'
++
++let db: Database
++let env: typeConfig.Bindings
++const password = 'Local-Fixture-729!'
++const hash = cryptoUtil.bcryptText(password)
++beforeEach(async () => {
++  db = await migrate()
++  db.prepare('INSERT INTO user(authId,email,password,emailVerified,otpSecret) VALUES(?,?,?,?,?)').run('owner','owner@example.test',hash,1,'')
++  db.prepare('UPDATE app SET redirectUris=? WHERE clientId=?').run('https://auth.example.test/account','naccount-user-portal')
++  env = { ...process.env, ...mock(db), AUTH_SERVER_URL:'https://auth.example.test', NACCOUNT_PORTAL_CLIENT_ID:'naccount-user-portal', PG_CONNECTION_STRING:'',
++    ENABLE_PASSWORD_RESET:true, ENABLE_PASSWORDLESS_SIGN_IN:false, ENABLE_RECOVERY_CODE:true, OTP_MFA_IS_REQUIRED:false, ENFORCE_ONE_MFA_ENROLLMENT:[],
++    EMAIL_PROVIDER_NAME:'resend',RESEND_API_KEY:'fixture',RESEND_SENDER_ADDRESS:'sender@example.test',
++    TWILIO_ACCOUNT_ID:'fixture',TWILIO_AUTH_TOKEN:'fixture',TWILIO_SENDER_NUMBER:'+12025550100',
++  } as unknown as typeConfig.Bindings
++  vi.spyOn(jwtService,'getAccessTokenBody').mockImplementation(async (_c, token) => ({
++    sub:'owner',azp:'naccount-user-portal',scope:'openid profile',securityVersion:token==='v1'?1:0,
++    ...(token==='impersonated'?{impersonatedBy:'admin'}:{}),
++  } as typeConfig.AccessTokenBody))
++  vi.spyOn(emailService,'sendChangeEmailVerificationCode').mockResolvedValue('654321')
++  vi.spyOn(smsService,'sendSmsMfa').mockResolvedValue('123456')
++})
++afterEach(() => { db.close(); vi.restoreAllMocks() })
++const post = (path: string, body: unknown, token='v0') => account.request('/account/api/security/'+path,{
++  method:'POST',headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},body:JSON.stringify(body),
++},env)
++const begin = async (body: object) => {
++  const response=await post('start',{password,...body})
++  expect(response.status,JSON.stringify(await response.clone().json())).toBe(200)
++  return await response.json() as any
++}
++const row = () => db.prepare("SELECT * FROM user WHERE authId='owner'").get() as any
++const finish = (challenge: any, values: object={}) => post('complete',{id:challenge.id,token:challenge.token,...values})
++
++describe('self-service account security',()=>{
++  it('changes email only after the target code, revokes sessions and erases challenge secrets',async()=>{
++    const c=await begin({action:'email',target:' NEW@example.test '})
++    expect(row().email).toBe('owner@example.test')
++    expect((await finish(c,{targetCode:'000000'})).status).toBe(400)
++    expect(row().email).toBe('owner@example.test')
++    expect((await finish(c,{targetCode:'654321'})).status).toBe(200)
++    expect(row()).toMatchObject({email:'new@example.test',emailVerified:1,securityVersion:1})
++    expect((await finish(c,{targetCode:'654321'})).status).not.toBe(200)
++    const stored=db.prepare('SELECT guard,payload,proofs,tokenHash FROM naccount_security_request').get()
++    expect(stored).toEqual({guard:'{}',payload:'{}',proofs:'{}',tokenHash:''})
++    expect((await account.request('/account/api/profile',{headers:{Authorization:'Bearer v0'}},env)).status).not.toBe(200)
++    expect((await account.request('/account/api/profile',{headers:{Authorization:'Bearer v1'}},env)).status).toBe(200)
++  })
++  it('keeps contact phone independent from SMS MFA and verifies before updating',async()=>{
++    db.prepare("UPDATE user SET smsPhoneNumber='+12025550111',smsPhoneNumberVerified=1").run()
++    const c=await begin({action:'phone',target:'+12025550122'})
++    expect(db.prepare('SELECT * FROM naccount_profile').get()).toBeUndefined()
++    expect((await finish(c,{targetCode:'123456'})).status).toBe(200)
++    expect(db.prepare('SELECT phone FROM naccount_profile').get()).toEqual({phone:'+12025550122'})
++    expect(row().smsPhoneNumber).toBe('+12025550111')
++  })
++  it('requires current password and rejects impersonation',async()=>{
++    expect((await post('start',{action:'password',password:'wrong',newPassword:'Replacement-739!'})).status).not.toBe(200)
++    expect((await post('start',{action:'delete',password,confirmation:'删除账户'},'impersonated')).status).not.toBe(200)
++    expect(row().securityVersion).toBe(0)
++  })
++  it('changes a strong password only on final confirmation',async()=>{
++    const c=await begin({action:'password',newPassword:'Replacement-739!'})
++    expect(row().password).toBe(hash)
++    expect((await finish(c)).status).toBe(200)
++    expect(cryptoUtil.bcryptCompare('Replacement-739!',row().password)).toBe(true)
++  })
++  it('enrolls OTP only after a valid new code and recovery acknowledgement',async()=>{
++    const c=await begin({action:'otp-enable'})
++    expect(row().otpVerified).toBe(0)
++    const code=await cryptoUtil.genTotp(c.setup.secret)
++    expect((await finish(c,{newOtp:code})).status).toBe(400)
++    expect((await finish(c,{newOtp:code,savedRecoveryCode:true})).status).toBe(200)
++    expect(row()).toMatchObject({otpVerified:1,otpSecret:c.setup.secret,mfaTypes:'otp'})
++    expect(cryptoUtil.bcryptCompare(c.setup.recoveryCode,row().recoveryCodeHash)).toBe(true)
++  })
++  it('requires existing OTP to disable it, then clears only OTP factors',async()=>{
++    const secret=cryptoUtil.genOtpSecret()
++    db.prepare("UPDATE user SET otpSecret=?,otpVerified=1,mfaTypes='otp'").run(secret)
++    const c=await begin({action:'otp-disable',otp:await cryptoUtil.genTotp(secret)})
++    expect((await finish(c)).status).toBe(200)
++    expect(row()).toMatchObject({otpVerified:0,otpSecret:'',mfaTypes:'',recoveryCodeHash:null})
++  })
++  it('does not bypass mandatory OTP',async()=>{
++    env.OTP_MFA_IS_REQUIRED=true
++    db.prepare("UPDATE user SET mfaTypes='otp',otpVerified=1").run()
++    expect((await post('start',{action:'otp-disable',password})).status).toBe(409)
++  })
++  it('requires system-enforced OTP even without a voluntary enrollment row',async()=>{
++    env.OTP_MFA_IS_REQUIRED=true
++    db.prepare("UPDATE user SET otpSecret=?,otpVerified=1,mfaTypes=''").run(cryptoUtil.genOtpSecret())
++    expect((await post('start',{action:'password',password,newPassword:'Replacement-739!'})).status).toBe(400)
++    expect((await post('start',{action:'otp-enable',password})).status).toBe(409)
++    expect(row().securityVersion).toBe(0)
++  })
++  it('requires configured email MFA even without voluntary enrollment',async()=>{
++    env.EMAIL_MFA_IS_REQUIRED=true
++    const c=await begin({action:'password',newPassword:'Replacement-739!'})
++    expect(c.required).toContain('currentEmailCode')
++    expect((await finish(c)).status).toBe(400)
++  })
++  it('rejects authentication policy changes during a pending request',async()=>{
++    const c=await begin({action:'email',target:'new@example.test'})
++    env.EMAIL_MFA_IS_REQUIRED=true
++    expect((await finish(c,{targetCode:'654321'})).status).toBe(409)
++  })
++  it('rejects changes to the current SMS proof destination',async()=>{
++    db.prepare("UPDATE user SET smsPhoneNumber='+12025550111',smsPhoneNumberVerified=1,mfaTypes='sms'").run()
++    const c=await begin({action:'password',newPassword:'Replacement-739!'})
++    db.prepare("UPDATE user SET smsPhoneNumber='+12025550112'").run()
++    expect((await finish(c,{currentSmsCode:'123456'})).status).toBe(409)
++    expect(row().securityVersion).toBe(0)
++  })
++  it('uses verified current email proof when no local password exists',async()=>{
++    db.prepare('UPDATE user SET password=NULL').run()
++    const c=await begin({action:'phone',target:'+12025550122'})
++    expect(c.required).toEqual(['currentEmailCode','targetCode'])
++    expect((await finish(c,{targetCode:'123456'})).status).toBe(400)
++    expect((await finish(c,{targetCode:'123456',currentEmailCode:'654321'})).status).toBe(200)
++  })
++  it('does not advertise native password login for an unconverted primary social account',async()=>{
++    db.prepare("UPDATE user SET password=NULL,socialAccountId='primary-subject',socialAccountType='Google'").run()
++    const response=await account.request('/account/api/security',{headers:{Authorization:'Bearer v0'}},env)
++    expect(await response.json()).toMatchObject({password:false,email:true,phone:true})
++  })
++  it('does not issue a recovery code when recovery login is disabled',async()=>{
++    env.ENABLE_RECOVERY_CODE=false
++    const c=await begin({action:'otp-enable'})
++    expect(c.setup.recoveryCode).toBeUndefined()
++    expect((await finish(c,{newOtp:await cryptoUtil.genTotp(c.setup.secret)})).status).toBe(200)
++  })
++  it('keeps all state unchanged when delivery fails',async()=>{
++    vi.mocked(emailService.sendChangeEmailVerificationCode).mockResolvedValue(null)
++    expect((await post('start',{action:'email',password,target:'new@example.test'})).status).toBe(503)
++    expect(row().email).toBe('owner@example.test')
++    expect(db.prepare('SELECT * FROM naccount_security_request').get()).toBeUndefined()
++  })
++  it('locks a challenge after five wrong attempts',async()=>{
++    const c=await begin({action:'email',target:'new@example.test'})
++    for(let i=0;i<5;i++) expect((await finish(c,{targetCode:'000000'})).status).toBe(400)
++    expect((await finish(c,{targetCode:'654321'})).status).toBe(409)
++    expect(row().securityVersion).toBe(0)
++  })
++  it.each(['expiry','password','email','version'])('rejects a changed identity or expired request: %s',async(kind)=>{
++    const c=await begin({action:'email',target:'new@example.test'})
++    if(kind==='expiry')db.prepare('UPDATE naccount_security_request SET expiresAt=0').run()
++    if(kind==='password')db.prepare("UPDATE user SET password='changed'").run()
++    if(kind==='email')db.prepare("UPDATE user SET email='changed@example.test'").run()
++    if(kind==='version')db.prepare('UPDATE user SET securityVersion=1').run()
++    expect((await finish(c,{targetCode:'654321'})).status).not.toBe(200)
++    expect(row().email).not.toBe('new@example.test')
++  })
++  it('checks email collision again at commit',async()=>{
++    const c=await begin({action:'email',target:'new@example.test'})
++    db.prepare('INSERT INTO user(authId,email,otpSecret) VALUES(?,?,?)').run('other','NEW@example.test','')
++    expect((await finish(c,{targetCode:'654321'})).status).toBe(409)
++    expect(row().email).toBe('owner@example.test')
++  })
++  it('allows only one winner for concurrent completion',async()=>{
++    const c=await begin({action:'email',target:'new@example.test'})
++    const results=await Promise.all([finish(c,{targetCode:'654321'}),finish(c,{targetCode:'654321'})])
++    expect(results.filter(r=>r.status===200)).toHaveLength(1)
++    expect(row().securityVersion).toBe(1)
++  })
++  it('deletes own personal data but retains a disabled identity tombstone',async()=>{
++    db.prepare("INSERT INTO naccount_profile(userId,nickname) SELECT id,'Fixture' FROM user WHERE authId='owner'").run()
++    db.prepare("INSERT INTO naccount_social_identity(provider,subject,userId,label) SELECT 'Google','subject',id,'label@example.test' FROM user WHERE authId='owner'").run()
++    const c=await begin({action:'delete',confirmation:'删除账户'})
++    expect((await finish(c)).status).toBe(200)
++    expect(row()).toMatchObject({isActive:0,email:null,password:null,securityVersion:1})
++    expect(row().deletedAt).toBeTruthy()
++    expect(db.prepare('SELECT * FROM naccount_profile').get()).toBeUndefined()
++    expect(db.prepare('SELECT label FROM naccount_social_identity').get()).toEqual({label:''})
++  })
++  it('does not delete the final super administrator',async()=>{
++    db.prepare("INSERT INTO user_role(userId,roleId) SELECT u.id,r.id FROM user u,role r WHERE u.authId='owner' AND r.name='super_admin'").run()
++    const c=await begin({action:'delete',confirmation:'删除账户'})
++    expect((await finish(c)).status).toBe(409)
++    expect(row().isActive).toBe(1)
++  })
++  it('enforces send cooldown and advertises unconfigured providers honestly',async()=>{
++    await begin({action:'email',target:'new@example.test'})
++    expect((await post('start',{action:'email',password,target:'another@example.test'})).status).toBe(429)
++    env.RESEND_API_KEY=''
++    const res=await account.request('/account/api/security',{headers:{Authorization:'Bearer v0'}},env)
++    expect(await res.json()).toMatchObject({email:false,phone:true})
++  })
++})
+diff --git a/server/src/__tests__/normal/embedded/email-mfa.test.ts b/server/src/__tests__/normal/embedded/email-mfa.test.ts
+index be19304cadc72900a56ee805bdb1e6d28038da08..c25b9470a91459f1b484581513d393a6e7953991 100644
+--- a/server/src/__tests__/normal/embedded/email-mfa.test.ts
++++ b/server/src/__tests__/normal/embedded/email-mfa.test.ts
+@@ -414,7 +414,7 @@ describe(
+         const cookieValue = cookieMatch?.[1]
+         expect(cookieValue).toBeDefined()
+         expect(cookieValue?.split('-')).toHaveLength(2)
+-        expect(cookieValue?.split('-')[0]).toHaveLength(24)
++        expect(cookieValue?.split('-')[0]).toMatch(/^0\.[A-Za-z0-9]{24}$/)
+         expect(cookieValue?.split('-')[1]).toHaveLength(128)
+ 
+         const [deviceId, storedCookieValue] = cookieValue!.split('-')
+diff --git a/server/src/__tests__/normal/embedded/otp-mfa.test.ts b/server/src/__tests__/normal/embedded/otp-mfa.test.ts
+index 15429687f3ae0ca4fe9e4b56bb04646b29306fd0..2ad360490c0d63206c58bfacb23ff2935fe3ed72 100644
+--- a/server/src/__tests__/normal/embedded/otp-mfa.test.ts
++++ b/server/src/__tests__/normal/embedded/otp-mfa.test.ts
+@@ -528,7 +528,7 @@ describe(
+         const cookieValue = cookieMatch?.[1]
+         expect(cookieValue).toBeDefined()
+         expect(cookieValue?.split('-')).toHaveLength(2)
+-        expect(cookieValue?.split('-')[0]).toHaveLength(24)
++        expect(cookieValue?.split('-')[0]).toMatch(/^0\.[A-Za-z0-9]{24}$/)
+         expect(cookieValue?.split('-')[1]).toHaveLength(128)
+ 
+         const [deviceId, storedCookieValue] = cookieValue!.split('-')
+diff --git a/server/src/__tests__/normal/embedded/sms-mfa.test.ts b/server/src/__tests__/normal/embedded/sms-mfa.test.ts
+index fec2533d165bff2659d7b0be77b3b169df88312a..ef0311772ac16fc13c111d223d0c15ce4b0ebf6c 100644
+--- a/server/src/__tests__/normal/embedded/sms-mfa.test.ts
++++ b/server/src/__tests__/normal/embedded/sms-mfa.test.ts
+@@ -652,7 +652,7 @@ describe(
+         const cookieValue = cookieMatch?.[1]
+         expect(cookieValue).toBeDefined()
+         expect(cookieValue?.split('-')).toHaveLength(2)
+-        expect(cookieValue?.split('-')[0]).toHaveLength(24)
++        expect(cookieValue?.split('-')[0]).toMatch(/^0\.[A-Za-z0-9]{24}$/)
+         expect(cookieValue?.split('-')[1]).toHaveLength(128)
+ 
+         const [deviceId, storedCookieValue] = cookieValue!.split('-')
+diff --git a/server/src/__tests__/normal/identity-main/logout.test.ts b/server/src/__tests__/normal/identity-main/logout.test.ts
+index 954c587a97705b0e141f76925d30a7f56292d08f..c0575bf4135fc8454bc2a3e0e32d7aa74ad432e6 100644
+--- a/server/src/__tests__/normal/identity-main/logout.test.ts
++++ b/server/src/__tests__/normal/identity-main/logout.test.ts
+@@ -59,6 +59,7 @@ describe(
+ 
+       const tokenBody = await mockedKV.get(`${adapterConfig.BaseKVKey.RefreshToken}-${tokenJson.refresh_token}`)
+       expect(JSON.parse(tokenBody ?? '')).toStrictEqual({
++        securityVersion: 0,
+         authId: '1-1-1-1',
+         clientId: appRecord.clientId,
+         scope: 'profile openid offline_access',
+diff --git a/server/src/__tests__/normal/identity-mfa/email-mfa.test.ts b/server/src/__tests__/normal/identity-mfa/email-mfa.test.ts
+index 1b4dd1e751e157cfabd832cf67b6af35015054a6..f4bc5f583b9f20a95babebfaf200bd660f6f20f1 100644
+--- a/server/src/__tests__/normal/identity-mfa/email-mfa.test.ts
++++ b/server/src/__tests__/normal/identity-mfa/email-mfa.test.ts
+@@ -813,7 +813,7 @@ describe(
+         const cookieValue = cookieMatch?.[1]
+         expect(cookieValue).toBeDefined()
+         expect(cookieValue?.split('-')).toHaveLength(2)
+-        expect(cookieValue?.split('-')[0]).toHaveLength(24)
++        expect(cookieValue?.split('-')[0]).toMatch(/^0\.[A-Za-z0-9]{24}$/)
+         expect(cookieValue?.split('-')[1]).toHaveLength(128)
+ 
+         const [deviceId, storedCookieValue] = cookieValue!.split('-')
+diff --git a/server/src/__tests__/normal/identity-mfa/otp-mfa.test.ts b/server/src/__tests__/normal/identity-mfa/otp-mfa.test.ts
+index 445f31e81484199f276c2dd2039d325d790a6936..9a78f57ee9e04e08b738367b931bf4e7527ca9c0 100644
+--- a/server/src/__tests__/normal/identity-mfa/otp-mfa.test.ts
++++ b/server/src/__tests__/normal/identity-mfa/otp-mfa.test.ts
+@@ -575,7 +575,7 @@ describe(
+           },
+           mock(db),
+         )
+-        expect(res.status).toBe(400)
++        expect(res.status).toBe(401)
+       },
+     )
+ 
+@@ -712,7 +712,7 @@ describe(
+         const cookieValue = cookieMatch?.[1]
+         expect(cookieValue).toBeDefined()
+         expect(cookieValue?.split('-')).toHaveLength(2)
+-        expect(cookieValue?.split('-')[0]).toHaveLength(24)
++        expect(cookieValue?.split('-')[0]).toMatch(/^0\.[A-Za-z0-9]{24}$/)
+         expect(cookieValue?.split('-')[1]).toHaveLength(128)
+ 
+         const [deviceId, storedCookieValue] = cookieValue!.split('-')
+diff --git a/server/src/__tests__/normal/identity-mfa/sms-mfa.test.ts b/server/src/__tests__/normal/identity-mfa/sms-mfa.test.ts
+index e52b255f70f9a169e16d253e68b34bf28b19ef20..0668924fb7dfe1f77becfff9fa8d69d392131641 100644
+--- a/server/src/__tests__/normal/identity-mfa/sms-mfa.test.ts
++++ b/server/src/__tests__/normal/identity-mfa/sms-mfa.test.ts
+@@ -1302,7 +1302,7 @@ describe(
+         const cookieValue = cookieMatch?.[1]
+         expect(cookieValue).toBeDefined()
+         expect(cookieValue?.split('-')).toHaveLength(2)
+-        expect(cookieValue?.split('-')[0]).toHaveLength(24)
++        expect(cookieValue?.split('-')[0]).toMatch(/^0\.[A-Za-z0-9]{24}$/)
+         expect(cookieValue?.split('-')[1]).toHaveLength(128)
+ 
+         const [deviceId, storedCookieValue] = cookieValue!.split('-')
+diff --git a/server/src/__tests__/normal/oauth.test.ts b/server/src/__tests__/normal/oauth.test.ts
+index eca2129bb497737f970f90ddbbc4a29d2110d883..e58bad8bfa9efe566fadf861c795bd94cecd63bd 100644
+--- a/server/src/__tests__/normal/oauth.test.ts
++++ b/server/src/__tests__/normal/oauth.test.ts
+@@ -1139,6 +1139,8 @@ describe(
+ 
+         const accessTokenBody = decode(tokenJson.access_token)
+         expect(accessTokenBody.payload).toStrictEqual({
++          securityVersion: 0,
++          tokenType: 'user',
+           sub: '1-1-1-1',
+           azp: appRecord.clientId,
+           iss: 'http://localhost:8787',
+@@ -1563,6 +1565,8 @@ describe(
+ 
+         const tokenBody = decode(refreshTokenJson.access_token)
+         expect(tokenBody.payload).toStrictEqual({
++          securityVersion: 0,
++          tokenType: 'user',
+           sub: '1-1-1-1',
+           azp: appRecord.clientId,
+           iss: 'http://localhost:8787',
+@@ -1612,6 +1616,8 @@ describe(
+ 
+         const tokenBody = decode(refreshTokenJson.access_token)
+         expect(tokenBody.payload).toStrictEqual({
++          securityVersion: 0,
++          tokenType: 'user',
+           sub: '1-1-1-1',
+           azp: appRecord.clientId,
+           iss: 'http://localhost:8787',
+@@ -1767,6 +1773,7 @@ describe(
+ 
+         const tokenBody = decode(tokenJson.access_token)
+         expect(tokenBody.payload).toStrictEqual({
++          tokenType: 'service',
+           sub: appRecord.clientId,
+           azp: expect.any(String),
+           iss: 'http://localhost:8787',
+@@ -2557,8 +2564,8 @@ describe(
+           { headers: { Authorization: `Bearer ${tokenJson.access_token}` } },
+           mock(db),
+         )
+-        expect(userInfoRes.status).toBe(404)
+-        expect(await userInfoRes.text()).toBe(messageConfig.RequestError.NoUser)
++        expect(userInfoRes.status).toBe(401)
++        expect(await userInfoRes.text()).toBe('ACCOUNT_SESSION_REVOKED')
+ 
+         global.process.env.ENFORCE_ONE_MFA_ENROLLMENT = ['email', 'otp'] as unknown as string
+       },
+@@ -2576,8 +2583,8 @@ describe(
+           { headers: { Authorization: `Bearer ${tokenJson.access_token}` } },
+           mock(db),
+         )
+-        expect(userInfoRes.status).toBe(400)
+-        expect(await userInfoRes.text()).toBe(messageConfig.RequestError.UserDisabled)
++        expect(userInfoRes.status).toBe(401)
++        expect(await userInfoRes.text()).toBe('ACCOUNT_SESSION_REVOKED')
+ 
+         global.process.env.ENFORCE_ONE_MFA_ENROLLMENT = ['email', 'otp'] as unknown as string
+       },
+@@ -2618,6 +2625,7 @@ describe(
+ 
+       const tokenBody = await mockedKV.get(`${adapterConfig.BaseKVKey.RefreshToken}-${tokenJson.refresh_token}`)
+       expect(JSON.parse(tokenBody ?? '')).toStrictEqual({
++        securityVersion: 0,
+         authId: '1-1-1-1',
+         clientId: appRecord.clientId,
+         scope: 'profile openid offline_access',
+diff --git a/server/src/__tests__/normal/other.test.ts b/server/src/__tests__/normal/other.test.ts
+index 1d47e715f52dc645ef04ac3ae9a7b2f93de7d3c3..ac4f12026a3b09f6fb1777485049be42def01d06 100644
+--- a/server/src/__tests__/normal/other.test.ts
++++ b/server/src/__tests__/normal/other.test.ts
+@@ -57,7 +57,7 @@ describe(
+           ID_TOKEN_EXPIRES_IN: 1800,
+           SERVER_SESSION_EXPIRES_IN: 1800,
+           AUTH_SERVER_URL: 'http://localhost:8787',
+-          SUPPORTED_LOCALES: ['en', 'fr'],
++          SUPPORTED_LOCALES: ['en', 'fr', 'zh'],
+           ENABLE_LOCALE_SELECTOR: true,
+           COMPANY_LOGO_URL: 'https://valuemelody.com/logo.svg',
+           COMPANY_EMAIL_LOGO_URL: 'https://valuemelody.com/logo.jpg',
+diff --git a/server/src/__tests__/normal/s2s/app.test.ts b/server/src/__tests__/normal/s2s/app.test.ts
+index 11fa808a3159429b432cd934fa9036176ba170c3..08527230a8485f20f979e3348633691057f127c3 100644
+--- a/server/src/__tests__/normal/s2s/app.test.ts
++++ b/server/src/__tests__/normal/s2s/app.test.ts
+@@ -64,7 +64,7 @@ const createNewApp = async (token?: string) => await app.request(
+ )
+ 
+ const newApp = {
+-  id: 3,
++  id: 4,
+   clientId: expect.any(String),
+   type: 'spa',
+   isActive: true,
+@@ -130,8 +130,8 @@ describe(
+         )
+         const json = await res.json() as { apps: appModel.Record[] }
+ 
+-        expect(json.apps.length).toBe(2)
+-        expect(json).toStrictEqual({ apps: [adminSpaApp, adminS2sApp] })
++        expect(json.apps.length).toBe(3)
++        expect(json).toStrictEqual({ apps: [adminSpaApp, adminS2sApp, expect.objectContaining({ clientId: "naccount-user-portal", type: "spa", name: "NAccount User Portal (SPA)", id: 3, isActive: true })] })
+       },
+     )
+ 
+@@ -153,8 +153,8 @@ describe(
+         )
+         const json = await res.json() as { apps: appModel.Record[] }
+ 
+-        expect(json.apps.length).toBe(2)
+-        expect(json).toStrictEqual({ apps: [adminSpaApp, adminS2sApp] })
++        expect(json.apps.length).toBe(3)
++        expect(json).toStrictEqual({ apps: [adminSpaApp, adminS2sApp, expect.objectContaining({ clientId: "naccount-user-portal", type: "spa", name: "NAccount User Portal (SPA)", id: 3, isActive: true })] })
+       },
+     )
+ 
+@@ -272,7 +272,7 @@ describe(
+       'should return 404 when can not find app by id',
+       async () => {
+         const res = await app.request(
+-          `${BaseRoute}/3`,
++          `${BaseRoute}/4`,
+           { headers: { Authorization: `Bearer ${await getS2sToken(db)}` } },
+           mock(db),
+         )
+@@ -426,7 +426,7 @@ describe(
+           Scope.WriteApp,
+         )
+         const res = await app.request(
+-          `${BaseRoute}/3`,
++          `${BaseRoute}/4`,
+           {
+             method: 'PUT',
+             body: JSON.stringify({ scopes: ['openid', 'root'] }),
+@@ -445,7 +445,7 @@ describe(
+       async () => {
+         await createNewApp()
+         const res = await app.request(
+-          `${BaseRoute}/3`,
++          `${BaseRoute}/4`,
+           {
+             method: 'PUT',
+             body: JSON.stringify({ scopes: ['root'] }),
+@@ -475,7 +475,7 @@ describe(
+           scopes: ['openid', 'offline_access'],
+         }
+         const res = await app.request(
+-          `${BaseRoute}/3`,
++          `${BaseRoute}/4`,
+           {
+             method: 'PUT',
+             body: JSON.stringify(updateObj),
+@@ -512,7 +512,7 @@ describe(
+           allowEmailMfaAsBackup: true,
+         }
+         const res = await app.request(
+-          `${BaseRoute}/3`,
++          `${BaseRoute}/4`,
+           {
+             method: 'PUT',
+             body: JSON.stringify(updateObj),
+@@ -541,7 +541,7 @@ describe(
+           allowEmailMfaAsBackup: false,
+         }
+         const res1 = await app.request(
+-          `${BaseRoute}/3`,
++          `${BaseRoute}/4`,
+           {
+             method: 'PUT',
+             body: JSON.stringify(updateObj1),
+@@ -569,7 +569,7 @@ describe(
+       async () => {
+         await createNewApp()
+         const res = await app.request(
+-          `${BaseRoute}/3`,
++          `${BaseRoute}/4`,
+           {
+             method: 'PUT',
+             body: JSON.stringify({ isActive: true }),
+@@ -586,7 +586,7 @@ describe(
+         })
+ 
+         const res1 = await app.request(
+-          `${BaseRoute}/3`,
++          `${BaseRoute}/4`,
+           {
+             method: 'PUT',
+             body: JSON.stringify({ isActive: false }),
+@@ -609,7 +609,7 @@ describe(
+       async () => {
+         await createNewApp()
+         const res = await app.request(
+-          `${BaseRoute}/3`,
++          `${BaseRoute}/4`,
+           {
+             method: 'PUT',
+             body: JSON.stringify({}),
+@@ -628,7 +628,7 @@ describe(
+       async () => {
+         await createNewApp()
+         const res = await app.request(
+-          `${BaseRoute}/4`,
++          `${BaseRoute}/999`,
+           {
+             method: 'PUT',
+             body: JSON.stringify({ name: 'test name 1' }),
+@@ -649,7 +649,7 @@ describe(
+           scopes: ['openid', 'offline_access', 'unknown'],
+         }
+         const res = await app.request(
+-          `${BaseRoute}/3`,
++          `${BaseRoute}/4`,
+           {
+             method: 'PUT',
+             body: JSON.stringify(updateObj),
+@@ -671,7 +671,7 @@ describe(
+           scopes: ['openid', 'offline_access'],
+         }
+         const res = await app.request(
+-          `${BaseRoute}/3`,
++          `${BaseRoute}/4`,
+           {
+             method: 'PUT',
+             body: JSON.stringify(updateObj),
+@@ -700,7 +700,7 @@ describe(
+       async () => {
+         await createNewApp()
+         const res = await app.request(
+-          `${BaseRoute}/3`,
++          `${BaseRoute}/4`,
+           {
+             method: 'DELETE',
+             headers: { Authorization: `Bearer ${await getS2sToken(db)}` },
+@@ -710,7 +710,7 @@ describe(
+         expect(res.status).toBe(204)
+ 
+         const checkRes = await app.request(
+-          `${BaseRoute}/3`,
++          `${BaseRoute}/4`,
+           { headers: { Authorization: `Bearer ${await getS2sToken(db)}` } },
+           mock(db),
+         )
+diff --git a/server/src/__tests__/normal/s2s/user.test.ts b/server/src/__tests__/normal/s2s/user.test.ts
+index d76a56ff804a6cfac87861791daa7b4ad6a3e6e0..b4b037f4abf168ba5a63a9138f335d7d1394e40c 100644
+--- a/server/src/__tests__/normal/s2s/user.test.ts
++++ b/server/src/__tests__/normal/s2s/user.test.ts
+@@ -3192,6 +3192,8 @@ describe(
+             exp: expect.any(Number),
+             roles: [],
+             impersonatedBy: '1-1-1-1',
++            securityVersion: 0,
++            tokenType: 'user',
+           },
+         })
+ 
+diff --git a/server/src/configs/type.ts b/server/src/configs/type.ts
+index de425d88e3c56a91f187fb67624a2504f9774df1..8b2f68a4a20796f29c9fa8e3a584e05efe62fba0 100644
+--- a/server/src/configs/type.ts
++++ b/server/src/configs/type.ts
+@@ -8,7 +8,7 @@ import { oauthDto } from 'dtos'
+ import { typeConfig } from 'configs'
+ import { userModel } from 'models'
+ 
+-export type Locale = 'en' | 'fr'
++export type Locale = 'en' | 'fr' | 'zh'
+ 
+ export type Bindings = {
+   DB: D1Database;
+@@ -48,6 +48,7 @@ export type Bindings = {
+   SMTP_SENDER_ADDRESS: string;
+   AUTH_SERVER_URL: string;
+   NACCOUNT_PORTAL_CLIENT_ID?: string;
++  NACCOUNT_PUBLIC_APP_IDS?: string[];
+   GOOGLE_AUTH_CLIENT_SECRET?: string;
+   ENABLE_SIGN_UP: boolean;
+   ENABLE_PASSWORD_SIGN_IN: boolean;
+@@ -160,6 +161,8 @@ export interface EmbeddedSessionBodyWithUser {
+ }
+ 
+ export interface AccessTokenBody {
++  securityVersion?: number;
++  tokenType?: 'user' | 'service';
+   sub: string;
+   azp: string;
+   iss: string;
+@@ -176,6 +179,7 @@ export interface BasicAuthBody {
+ }
+ 
+ export interface RefreshTokenBody {
++  securityVersion?: number;
+   authId: string;
+   clientId: string;
+   scope: string;
+diff --git a/server/src/handlers/embedded.ts b/server/src/handlers/embedded.ts
+index c01ab64d5817f782ee0c9f2099ad9ff8f5f61848..cbd9d3a1d6584e5e3b13f3f9cd65895b4140a6e4 100644
+--- a/server/src/handlers/embedded.ts
++++ b/server/src/handlers/embedded.ts
+@@ -22,6 +22,7 @@ import {
+   signUpHook,
+ } from 'hooks'
+ import { userModel } from 'models'
++import { freshUser } from 'services/accountEpoch'
+ 
+ export const sessionBodyToAuthCodeBody = (sessionBody: typeConfig.EmbeddedSessionBody): typeConfig.AuthCodeBody => {
+   if (!sessionBody.user) {
+@@ -145,6 +146,7 @@ const getSessionBodyWithUser = async (
+     throw new errorConfig.NotFound(messageConfig.RequestError.WrongSessionId)
+   }
+ 
++  await freshUser(c, sessionBody.user)
+   return sessionBody as typeConfig.EmbeddedSessionBodyWithUser
+ }
+ 
+@@ -632,6 +634,7 @@ export const postEmailMfa = async (c: Context<typeConfig.Context>) => {
+     c,
+     bodyDto.rememberDevice,
+     sessionBody.user.id,
++    sessionBody.user.securityVersion ?? 0,
+   )
+ 
+   const result = await processPostAuthorizeForEmbedded(
+@@ -719,6 +722,7 @@ export const postOtpMfa = async (c: Context<typeConfig.Context>) => {
+     c,
+     bodyDto.rememberDevice,
+     sessionBody.user.id,
++    sessionBody.user.securityVersion ?? 0,
+   )
+ 
+   const result = await processPostAuthorizeForEmbedded(
+@@ -811,6 +815,7 @@ export const postSmsMfa = async (c: Context<typeConfig.Context>) => {
+     c,
+     bodyDto.rememberDevice,
+     sessionBody.user.id,
++    sessionBody.user.securityVersion ?? 0,
+   )
+ 
+   const result = await processPostAuthorizeForEmbedded(
+diff --git a/server/src/handlers/identity/main.ts b/server/src/handlers/identity/main.ts
+index eb71249b6c4ee96c57d560782968a51c5652ed60..fcc65da8a7a9eaed30eaa04a75062533dd9a80f5 100644
+--- a/server/src/handlers/identity/main.ts
++++ b/server/src/handlers/identity/main.ts
+@@ -1,3 +1,4 @@
++import { freshUser } from 'services/accountEpoch'
+ import {
+   Context, TypedResponse,
+ } from 'hono'
+@@ -238,6 +239,7 @@ Promise<TypedResponse<GetAppConsentRes>> => {
+     c.env.KV,
+     queryDto.code,
+   )
++  if (authInfo) await freshUser(c, authInfo.user)
+   if (!authInfo) {
+     loggerUtil.triggerLogger(
+       c,
+@@ -265,6 +267,7 @@ export const postAppConsent = async (c: Context<typeConfig.Context>) => {
+     c.env.KV,
+     bodyDto.code,
+   )
++  if (authCodeBody) await freshUser(c, authCodeBody.user)
+   if (!authCodeBody) {
+     loggerUtil.triggerLogger(
+       c,
+diff --git a/server/src/handlers/identity/mfa.ts b/server/src/handlers/identity/mfa.ts
+index 9c717a7e80291f1d228cf35c88a7003faa43fc4c..fb7fc6c3196b34854c36ae4fb592c25f1be86a66 100644
+--- a/server/src/handlers/identity/mfa.ts
++++ b/server/src/handlers/identity/mfa.ts
+@@ -15,6 +15,7 @@ import {
+   validateUtil, loggerUtil,
+ } from 'utils'
+ import { userModel } from 'models'
++import { freshUser } from 'services/accountEpoch'
+ 
+ export const getAuthCodeBody = async (
+   c: Context<typeConfig.Context>, code: string, policy?: string,
+@@ -37,6 +38,7 @@ export const getAuthCodeBody = async (
+     )
+     throw new errorConfig.Forbidden(messageConfig.RequestError.WrongAuthCode)
+   }
++  await freshUser(c, authCodeStore.user)
+   return authCodeStore
+ }
+ 
+@@ -142,6 +144,7 @@ export const postProcessEmailMfa = async (c: Context<typeConfig.Context>) => {
+     c,
+     bodyDto.rememberDevice,
+     authCodeStore.user.id,
++    authCodeStore.user.securityVersion ?? 0,
+   )
+ 
+   return c.json(await identityService.processPostAuthorize(
+@@ -242,6 +245,7 @@ export const postProcessSmsMfa = async (c: Context<typeConfig.Context>) => {
+     c,
+     bodyDto.rememberDevice,
+     authCodeStore.user.id,
++    authCodeStore.user.securityVersion ?? 0,
+   )
+ 
+   return c.json(await identityService.processPostAuthorize(
+@@ -335,6 +339,7 @@ export const postProcessOtpMfa = async (c: Context<typeConfig.Context>) => {
+     c,
+     bodyDto.rememberDevice,
+     authCodeStore.user.id,
++    authCodeStore.user.securityVersion ?? 0,
+   )
+ 
+   return c.json(await identityService.processPostAuthorize(
+diff --git a/server/src/handlers/identity/passkey.ts b/server/src/handlers/identity/passkey.ts
+index 5ba464d5fbd00fa4e0527227079832954c298d78..c4d5209dd7b792db72ec411afa067b8a7050e0a8 100644
+--- a/server/src/handlers/identity/passkey.ts
++++ b/server/src/handlers/identity/passkey.ts
+@@ -1,3 +1,4 @@
++import { freshUser } from 'services/accountEpoch'
+ import {
+   Context, TypedResponse,
+ } from 'hono'
+@@ -33,6 +34,7 @@ export const getProcessPasskeyEnroll = async (c: Context<typeConfig.Context>)
+     c.env.KV,
+     queryDto.code,
+   )
++  if (authCodeStore) await freshUser(c, authCodeStore.user)
+   if (!authCodeStore) {
+     loggerUtil.triggerLogger(
+       c,
+@@ -60,6 +62,7 @@ export const postProcessPasskeyEnroll = async (c: Context<typeConfig.Context>) =
+     c.env.KV,
+     bodyDto.code,
+   )
++  if (authCodeStore) await freshUser(c, authCodeStore.user)
+   if (!authCodeStore) {
+     loggerUtil.triggerLogger(
+       c,
+@@ -109,6 +112,7 @@ export const postProcessPasskeyEnrollDecline = async (c: Context<typeConfig.Cont
+     c.env.KV,
+     bodyDto.code,
+   )
++  if (authCodeStore) await freshUser(c, authCodeStore.user)
+   if (!authCodeStore) {
+     loggerUtil.triggerLogger(
+       c,
+diff --git a/server/src/handlers/identity/passwordless.ts b/server/src/handlers/identity/passwordless.ts
+index 2681ddc5ae528a3d73a0c7069a06dd0691983552..16e5b0ff02bfec78fd6d26a71ee46a37e04d0eef 100644
+--- a/server/src/handlers/identity/passwordless.ts
++++ b/server/src/handlers/identity/passwordless.ts
+@@ -1,3 +1,4 @@
++import { freshUser } from 'services/accountEpoch'
+ import { Context } from 'hono'
+ import { env } from 'hono/adapter'
+ import {
+@@ -59,6 +60,7 @@ export const postSendPasswordlessCode = async (c: Context<typeConfig.Context>) =
+     c.env.KV,
+     bodyDto.code,
+   )
++  if (authCodeBody) await freshUser(c, authCodeBody.user)
+   if (!authCodeBody) {
+     loggerUtil.triggerLogger(
+       c,
+@@ -90,6 +92,7 @@ export const postProcessPasswordlessCode = async (c: Context<typeConfig.Context>
+     c.env.KV,
+     bodyDto.code,
+   )
++  if (authCodeStore) await freshUser(c, authCodeStore.user)
+   if (!authCodeStore) {
+     loggerUtil.triggerLogger(
+       c,
+diff --git a/server/src/handlers/identity/policy.ts b/server/src/handlers/identity/policy.ts
+index a48e34f123a4231ddae48ebcad625f49ef8ee69e..15b2160b4b7253cdcd2d7eb99c16dd6dee2e2267 100644
+--- a/server/src/handlers/identity/policy.ts
++++ b/server/src/handlers/identity/policy.ts
+@@ -1,3 +1,4 @@
++import { freshUser } from 'services/accountEpoch'
+ import {
+   Context, TypedResponse,
+ } from 'hono'
+@@ -48,6 +49,7 @@ export const postChangePassword = async (c: Context<typeConfig.Context>) => {
+     bodyDto.code,
+     oauthDto.Policy.ChangePassword,
+   )
++  if (authInfo) await freshUser(c, authInfo.user)
+   if (!authInfo) {
+     loggerUtil.triggerLogger(
+       c,
+@@ -87,6 +89,7 @@ export const postChangeEmailCode = async (c: Context<typeConfig.Context>) => {
+     bodyDto.code,
+     oauthDto.Policy.ChangeEmail,
+   )
++  if (authInfo) await freshUser(c, authInfo.user)
+   if (!authInfo) {
+     loggerUtil.triggerLogger(
+       c,
+@@ -159,6 +162,7 @@ export const postChangeEmail = async (c: Context<typeConfig.Context>) => {
+     bodyDto.code,
+     oauthDto.Policy.ChangeEmail,
+   )
++  if (authInfo) await freshUser(c, authInfo.user)
+   if (!authInfo) {
+     loggerUtil.triggerLogger(
+       c,
+@@ -245,6 +249,7 @@ export const postResetMfa = async (c: Context<typeConfig.Context>) => {
+     bodyDto.code,
+     oauthDto.Policy.ResetMfa,
+   )
++  if (authCodeBody) await freshUser(c, authCodeBody.user)
+   if (!authCodeBody) {
+     loggerUtil.triggerLogger(
+       c,
+@@ -281,6 +286,7 @@ export const getManagePasskey = async (c: Context<typeConfig.Context>)
+     queryDto.code,
+     oauthDto.Policy.ManagePasskey,
+   )
++  if (authInfo) await freshUser(c, authInfo.user)
+   if (!authInfo) {
+     loggerUtil.triggerLogger(
+       c,
+@@ -321,6 +327,7 @@ export const postManagePasskey = async (c: Context<typeConfig.Context>) => {
+     bodyDto.code,
+     oauthDto.Policy.ManagePasskey,
+   )
++  if (authInfo) await freshUser(c, authInfo.user)
+   if (!authInfo) {
+     loggerUtil.triggerLogger(
+       c,
+@@ -380,6 +387,7 @@ export const postManageRecoveryCode = async (c: Context<typeConfig.Context>)
+     bodyDto.code,
+     oauthDto.Policy.ManageRecoveryCode,
+   )
++  if (authInfo) await freshUser(c, authInfo.user)
+   if (!authInfo) {
+     loggerUtil.triggerLogger(
+       c,
+@@ -420,6 +428,7 @@ export const deleteManagePasskey = async (c: Context<typeConfig.Context>) => {
+     bodyDto.code,
+     oauthDto.Policy.ManagePasskey,
+   )
++  if (authInfo) await freshUser(c, authInfo.user)
+   if (!authInfo) {
+     loggerUtil.triggerLogger(
+       c,
+@@ -473,6 +482,7 @@ export const postUpdateInfo = async (c: Context<typeConfig.Context>) => {
+     bodyDto.code,
+     oauthDto.Policy.UpdateInfo,
+   )
++  if (authInfo) await freshUser(c, authInfo.user)
+   if (!authInfo) {
+     loggerUtil.triggerLogger(
+       c,
+diff --git a/server/src/handlers/identity/recoveryCode.ts b/server/src/handlers/identity/recoveryCode.ts
+index 8e233559301186a8fcb7fbf334b1836fcbe3c01d..feb73012e9cabf4463cf694e6490e6d41e7b77e6 100644
+--- a/server/src/handlers/identity/recoveryCode.ts
++++ b/server/src/handlers/identity/recoveryCode.ts
+@@ -1,3 +1,4 @@
++import { freshUser } from 'services/accountEpoch'
+ import {
+   Context, TypedResponse,
+ } from 'hono'
+@@ -64,6 +65,7 @@ export const postProcessRecoveryCodeEnroll = async (c: Context<typeConfig.Contex
+     c.env.KV,
+     bodyDto.code,
+   )
++  if (authCodeStore) await freshUser(c, authCodeStore.user)
+   if (!authCodeStore) {
+     loggerUtil.triggerLogger(
+       c,
+diff --git a/server/src/handlers/identity/view.tsx b/server/src/handlers/identity/view.tsx
+index e0fecfac7332cb8ccd707610f4fa7b1f9f2ec79b..7fde117ba1e54016e7049c7611011ff7323225de 100644
+--- a/server/src/handlers/identity/view.tsx
++++ b/server/src/handlers/identity/view.tsx
+@@ -1,3 +1,4 @@
++import { freshUser } from 'services/accountEpoch'
+ import { Context } from 'hono'
+ import { env } from 'hono/adapter'
+ import { html } from 'hono/html'
+@@ -205,6 +206,7 @@ export const getProcessView = async (c: Context<typeConfig.Context>) => {
+     c.env.KV,
+     queryDto.code,
+   )
++  if (authInfo) await freshUser(c, authInfo.user)
+   if (!authInfo) return c.redirect(`${routeConfig.IdentityRoute.AuthCodeExpiredView}?locale=${queryDto.locale}`)
+ 
+   const {
+diff --git a/server/src/handlers/oauth.tsx b/server/src/handlers/oauth.tsx
+index 14b60c6634513acaab2848c16df2809ee5134883..e15e7546d617e8b57ab0cec370b1e1a0cada951f 100644
+--- a/server/src/handlers/oauth.tsx
++++ b/server/src/handlers/oauth.tsx
+@@ -87,7 +87,7 @@ export const createFullAuthorize = async (
+ 
+ export const getAuthorize = async (c: Context<typeConfig.Context>) => {
+   const { queryDto } = await parseGetAuthorizeDto(c)
+-  const stored = sessionService.getAuthInfoSession(
++  const stored = await sessionService.getAuthInfoSession(
+     c,
+     queryDto.clientId,
+   )
+diff --git a/server/src/handlers/user.ts b/server/src/handlers/user.ts
+index 4254d5336a7b7ebb44b62d5438a6035bcdabf830..03e4b9244300cf1b08c730a19ccced06055e8965 100644
+--- a/server/src/handlers/user.ts
++++ b/server/src/handlers/user.ts
+@@ -479,6 +479,7 @@ export const impersonateUser = async (c: Context<typeConfig.Context>) => {
+       scope,
+       roles: userRoles,
+       impersonatedBy: impersonator.authId,
++      securityVersion: user.securityVersion ?? 0,
+       expiredAt: refreshTokenExpiresAt,
+     },
+     refreshTokenExpiresIn,
+@@ -501,7 +502,9 @@ export const getUserActiveSessions = async (c: Context<typeConfig.Context>) => {
+     c.env.KV,
+     user.id,
+   )
+-  return c.json({ activeSessions })
++  return c.json({ activeSessions: activeSessions
++    .filter((entry) => (entry.securityVersion ?? 0) === (user.securityVersion ?? 0))
++    .map(({ securityVersion: _version, ...entry }) => entry) })
+ }
+ 
+ export const deleteUserActiveSession = async (c: Context<typeConfig.Context>) => {
+diff --git a/server/src/models/user.ts b/server/src/models/user.ts
+index 5c1ae04379882b49e48e87412df80773ae39a781..7cfa5b50ca37cfc87959fafc52b948b2e8c13d9e 100644
+--- a/server/src/models/user.ts
++++ b/server/src/models/user.ts
+@@ -25,6 +25,7 @@ export enum SocialAccountType {
+ }
+ 
+ export interface Common {
++  securityVersion?: number;
+   id: number;
+   authId: string;
+   orgSlug: string;
+diff --git a/server/src/pages/account/Account.test.tsx b/server/src/pages/account/Account.test.tsx
+index 3a567c9daf8506411bfde1715ad79bfa2e3048d1..2fee29b2b39f7f7e282db5ba19169750af28d684 100644
+--- a/server/src/pages/account/Account.test.tsx
++++ b/server/src/pages/account/Account.test.tsx
+@@ -17,6 +17,8 @@ let container: HTMLDivElement
+ 
+ beforeEach(() => {
+   vi.resetAllMocks()
++  window.history.replaceState(null, '', '/account')
++  HTMLDialogElement.prototype.showModal = function () { this.setAttribute('open', '') }
+   container = document.createElement('div')
+   document.body.appendChild(container)
+   vi.mocked(auth.request).mockResolvedValue(config)
+@@ -37,22 +39,25 @@ describe('ordinary-user account center', () => {
+     await waitFor(() => expect(getByRole(container, 'button', { name: '登录' })).toBeTruthy())
+     expect(queryByRole(container, 'button', { name: '注册账号' })).toBeNull()
+   })
+-  it('shows current-user data and only enabled policy actions', async () => {
++  it('shows current-user data and opens the real security flow without a policy redirect', async () => {
+     vi.mocked(auth.restore).mockResolvedValue('access')
+-    vi.mocked(auth.profile).mockResolvedValue({ authId: 'ordinary-user', email: 'user@example.test', emailVerified: true })
++    vi.mocked(auth.profile).mockResolvedValue({ authId: 'ordinary-user', email: 'user@example.test', emailVerified: true, canUsePolicies: true })
+     render(<Account />, container)
+     await waitFor(() => expect(container.textContent).toContain('user@example.test'))
+-    expect(container.textContent).toContain('已验证')
++    expect(container.textContent).not.toContain('未验证')
+     expect(queryByRole(container, 'button', { name: '管理 Passkey' })).toBeNull()
+-    fireEvent.click(getByRole(container, 'button', { name: '修改个人资料' }))
+-    await waitFor(() => expect(auth.authorize).toHaveBeenCalledWith(config, 'update_info'))
++    vi.mocked(auth.request).mockResolvedValue({ password: true, passwordRequired: true, otpRequired: false })
++    fireEvent.click(getByRole(container, 'button', { name: '修改密码' }))
++    await waitFor(() => expect(getByRole(container, 'dialog', { name: '修改密码' })).toBeTruthy())
++    await waitFor(() => expect(getByRole(container, 'button', { name: '验证身份' })).toBeTruthy())
++    expect(auth.authorize).not.toHaveBeenCalled()
+   })
+   it('escapes account text instead of rendering HTML', async () => {
+     vi.mocked(auth.restore).mockResolvedValue('access')
+     vi.mocked(auth.profile).mockResolvedValue({ authId: 'user', email: '<img src=x onerror=alert(1)>', emailVerified: false })
+     render(<Account />, container)
+     await waitFor(() => expect(container.textContent).toContain('<img src=x'))
+-    expect(container.querySelector('img')).toBeNull()
++    expect(container.querySelector('img[src=x]')).toBeNull()
+   })
+   it('ends loading and allows recovery after failed userinfo', async () => {
+     vi.mocked(auth.restore).mockResolvedValue('access')
+diff --git a/server/src/pages/account/Account.tsx b/server/src/pages/account/Account.tsx
+index aa71e19c7f07fd5f5dcedb94124c7611c9083af3..15b20aeba1c4b4ef700fc00bc2f9a4e2b052a2f0 100644
+--- a/server/src/pages/account/Account.tsx
++++ b/server/src/pages/account/Account.tsx
+@@ -1,31 +1,48 @@
+-import { useEffect, useState } from 'hono/jsx'
++import { useEffect, useRef, useState } from 'hono/jsx'
+ import * as auth from './auth'
+ import SocialAccounts from './SocialAccounts'
++import Applications from './Applications'
++import InlineEdit from './InlineEdit'
++import SecurityDialog, { SecurityAction } from './SecurityDialog'
++import Icon from './Icons'
++import beaver from './beaver.svg'
++import './portal.css'
+ 
+-const actions: Record<string, string> = {
+-  update_info: '修改个人资料', change_password: '修改密码', change_email: '修改邮箱',
+-  reset_mfa: '重置多因素认证', manage_passkey: '管理 Passkey', manage_recovery_code: '管理恢复码',
+-}
+ const errors: Record<string, string> = {
+-  SESSION_EXPIRED: '登录已过期，请重新登录。',
+-  NETWORK_ERROR: '网络请求超时或失败，请重试。',
+-  REQUEST_FAILED: '操作未完成，请重试或重新登录。',
+-  INVALID_CALLBACK: '登录请求已失效或被取消，请重新登录。',
++  SESSION_EXPIRED: '登录已过期，请重新登录。', NETWORK_ERROR: '网络请求超时或失败，请重试。',
++  REQUEST_FAILED: '操作未完成，请重试或重新登录。', INVALID_CALLBACK: '登录请求已失效或被取消，请重新登录。',
+   NOT_CONFIGURED: '个人中心尚未配置完成。',
+ }
+-
+ export default function Account() {
+   const [config, setConfig] = useState<auth.PortalConfig | null>(null)
+   const [user, setUser] = useState<auth.Profile | null>(null)
+   const [accessToken, setAccessToken] = useState<string | null>(null)
+   const [busy, setBusy] = useState(true)
+   const [error, setError] = useState('')
++  const [notice, setNotice] = useState('')
+   const [attempt, setAttempt] = useState(0)
+-
++  const [section, setSection] = useState(window.location.hash === '#apps' ? 'apps' : 'profile')
++  const [menu, setMenu] = useState(false)
++  const [dialog, setDialog] = useState<SecurityAction | null>(null)
++  const menuRef = useRef<HTMLDivElement>(null)
++  const menuButton = useRef<HTMLButtonElement>(null)
++  useEffect(() => {
++    const navigate = () => setSection(window.location.hash === '#apps' ? 'apps' : 'profile')
++    const outside = (event: MouseEvent) => { if (!menuRef.current?.contains(event.target as Node)) setMenu(false) }
++    const escape = (event: KeyboardEvent) => {
++      if (event.key === 'Escape' && menuRef.current?.contains(document.activeElement)) { setMenu(false); menuButton.current?.focus() }
++    }
++    window.addEventListener('hashchange', navigate); document.addEventListener('click', outside); document.addEventListener('keydown', escape)
++    return () => { window.removeEventListener('hashchange', navigate); document.removeEventListener('click', outside); document.removeEventListener('keydown', escape) }
++  }, [])
++  useEffect(() => {
++    if (!notice) return
++    const timer = setTimeout(() => setNotice(''), 3500)
++    return () => clearTimeout(timer)
++  }, [notice])
+   useEffect(() => {
+     let cancelled = false
+-    setBusy(true)
+-    setError('')
++    setBusy(true); setError(''); setUser(null); setAccessToken(null); setConfig(null)
+     const load = async () => {
+       try {
+         const nextConfig = await auth.request<auth.PortalConfig>('/account/config')
+@@ -33,7 +50,7 @@ export default function Account() {
+         setConfig(nextConfig)
+         const result = new URLSearchParams(window.location.search).get('link_result')
+         if (result) {
+-          window.history.replaceState(null, '', window.location.pathname)
++          window.history.replaceState(null, '', window.location.pathname + window.location.hash)
+           if (result === 'failed') setError('社交账号绑定未完成或已被其他账号占用，请重新发起授权。')
+         }
+         const token = await auth.restore(nextConfig)
+@@ -42,59 +59,71 @@ export default function Account() {
+         if (!cancelled) { setAccessToken(token); setUser(nextUser) }
+       } catch (cause) {
+         if (!cancelled) setError(errors[cause instanceof auth.PortalError ? cause.code : 'REQUEST_FAILED'])
+-      } finally {
+-        if (!cancelled) setBusy(false)
+-      }
++      } finally { if (!cancelled) setBusy(false) }
+     }
+     void load()
+     return () => { cancelled = true }
+   }, [attempt])
+-
+   const run = async (operation: () => Promise<void>) => {
+     if (busy) return
+-    setBusy(true)
+-    setError('')
++    setBusy(true); setError('')
+     try { await operation() } catch (cause) {
+       setError(errors[cause instanceof auth.PortalError ? cause.code : 'REQUEST_FAILED'])
+     } finally { setBusy(false) }
+   }
+-  const button = 'rounded-lg border border-slate-300 px-4 py-3 text-left hover:bg-slate-100 focus-visible:outline-2 focus-visible:outline-offset-2 disabled:opacity-50'
+-
+-  return <main class='min-h-screen bg-slate-50 text-slate-900 px-4 py-12'>
+-    <div class='mx-auto max-w-2xl flex flex-col gap-6'>
+-      <header><p class='font-semibold text-sm'>NAccount</p><h1 class='text-3xl font-bold mt-2'>个人中心</h1></header>
+-      {busy && <p role='status'>正在处理…</p>}
+-      {error && <section class='rounded-lg border border-red-300 bg-red-50 p-4' role='alert'>
+-        <p>{error}</p><button class={`${button} mt-3`} disabled={busy} onClick={() => setAttempt(attempt + 1)}>重试</button>
+-      </section>}
+-      {!user && config && <section class='flex flex-wrap gap-3' aria-label='账号入口'>
+-        <button class={button} disabled={busy} onClick={() => run(() => auth.authorize(config))}>登录</button>
+-        {config.signup && <button class={button} disabled={busy} onClick={() => run(() => auth.authorize(config, undefined, true))}>注册账号</button>}
+-      </section>}
+-      {user && config && <>
+-        <section class='rounded-xl border border-slate-200 bg-white p-6'>
+-          <h2 class='text-lg font-semibold mb-4'>账号资料</h2>
+-          <dl class='grid grid-cols-[auto_1fr] gap-x-6 gap-y-3 break-all'>
+-            <dt>邮箱</dt><dd>{user.email || '未设置'}</dd>
+-            <dt>邮箱状态</dt><dd>{user.emailVerified ? '已验证' : '未验证'}</dd>
+-            <dt>姓名</dt><dd>{[user.firstName, user.lastName].filter(Boolean).join(' ') || '未设置'}</dd>
+-            <dt>账号 ID</dt><dd>{user.authId}</dd>
+-          </dl>
+-        </section>
+-        <section aria-labelledby='account-security'>
+-          <h2 id='account-security' class='text-lg font-semibold mb-4'>资料与安全</h2>
+-          <div class='grid gap-3 sm:grid-cols-2'>
+-            {config.policies.filter((policy) => actions[policy]).map((policy) => <button key={policy} class={button} disabled={busy}
+-              onClick={() => run(() => auth.authorize(config, policy))}>{actions[policy]}</button>)}
++  const save = async (key: 'nickname' | 'signature', value: string) => {
++    const updated = await auth.request<auth.Profile>('/account/api/profile', {
++      method: 'PATCH', headers: { Authorization: 'Bearer ' + accessToken, 'Content-Type': 'application/json' },
++      body: JSON.stringify({ [key]: value }),
++    })
++    setUser((current) => current ? { ...current, [key]: updated[key] } : null)
++  }
++  return <div class='naccount'>
++    <header class='top'>
++      <a class='brand' href='#profile' aria-label='用户中心首页'><img src={beaver} width='46' height='46' alt='Beaver' /></a>
++      <nav class='topnav' aria-label='主导航'><a href='#profile' aria-current={section === 'profile' ? 'page' : undefined}>用户中心</a><a href='#apps' aria-current={section === 'apps' ? 'page' : undefined}>应用管理</a></nav>
++      <div class='topright'><button class='user-toggle' aria-label='联系客服' onClick={() => setNotice('客服暂未开放')}><Icon name='support' /></button>
++        {user && <div class='user-menu' ref={menuRef}><button class='user-toggle' ref={menuButton} aria-label='用户菜单' aria-expanded={menu ? 'true' : 'false'} aria-controls='user-dropdown'
++          onClick={() => setMenu(!menu)}><Icon name='user' /></button>
++          {menu && <div class='user-dropdown' id='user-dropdown'><button disabled={busy} onClick={() => { setMenu(false); void run(async () => {
++            setUser(null); setAccessToken(null); setDialog(null)
++            await auth.logout(config!, accessToken)
++          }) }}><Icon name='exit' />退出登录</button></div>}
++        </div>}
++      </div>
++    </header>
++    <main class='layout'>
++      {busy && !user && <p class='load-status' role='status'>正在处理…</p>}
++      {error && <section class='error-banner' role='alert'><p>{error}</p><button class='btn' disabled={busy} onClick={() => setAttempt(attempt + 1)}>重试</button></section>}
++      {!user && config && !busy && <section class='entry-card' aria-label='账号入口'><Icon name='user' /><div class='entry-actions'>
++        <button class='btn primary' onClick={() => run(() => auth.authorize(config))}>登录</button>
++        {config.signup && <button class='btn' onClick={() => run(() => auth.authorize(config, undefined, true))}>注册账号</button>}
++      </div></section>}
++      {user && config && accessToken && (section === 'apps' ? <Applications accessToken={accessToken} /> : <section class='identity-card' aria-label='账户名片'>
++        <div class='card-cover' />
++        <div class='card-body'><div class='card-person'><div class='card-avatar' aria-label='默认头像'><Icon name='user' /></div>
++          <div class='card-details'><InlineEdit label='昵称' value={user.nickname ?? ''} placeholder='未设置昵称' maxLength={40} required disabled={!user.canEdit || busy} onSave={(value) => save('nickname', value)} />
++            <div class='card-id-row'><span class='card-id'>ID: {user.authId}</span><button class='edit-icon' aria-label='复制用户 ID' onClick={async () => {
++              try { await navigator.clipboard.writeText(user.authId); setNotice('已复制') } catch { setNotice('复制失败，请手动复制 ID') }
++            }}><Icon name='copy' /></button></div>
+           </div>
+-        </section>
+-        {accessToken && <SocialAccounts accessToken={accessToken} />}
+-        <button class={button} disabled={busy} onClick={() => run(async () => {
+-          setUser(null)
+-          setAccessToken(null)
+-          await auth.logout(config, accessToken)
+-        })}>退出登录</button>
+-      </>}
+-    </div>
+-  </main>
++        </div>
++        <div class='signature-line'><InlineEdit label='签名' value={user.signature ?? ''} placeholder='未设置签名' maxLength={120} disabled={!user.canEdit || busy} onSave={(value) => save('signature', value)} /></div>
++        <div class='binding-row'><div class='binding-value'><Icon name='mail' /><span>{user.email || '未绑定邮箱'}</span>{user.email && !user.emailVerified && <span class='muted'>未验证</span>}</div>
++          <button class='btn' disabled={busy} onClick={() => setDialog('email')}>{user.email ? '换绑' : '绑定'}</button></div>
++        <div class='binding-row'><div class='binding-value'><Icon name='phone' /><span>{user.phone || '未绑定手机号'}</span></div><button class='btn' onClick={() => setDialog('phone')}>{user.phone ? '换绑' : '绑定'}</button></div>
++        <SocialAccounts accessToken={accessToken} />
++        <div class='account-actions'><button class='btn' disabled={busy} onClick={() => setDialog(user.otpEnabled ? 'otp-disable' : 'otp-enable')}>{user.otpEnabled ? '禁用两步验证' : '启用两步验证'}</button>
++          <button class='btn' disabled={busy} onClick={() => setDialog('password')}>修改密码</button>
++          <button class='btn danger' onClick={() => setDialog('delete')}>删除账户</button></div>
++        </div>
++      </section>)}
++    </main>
++    {notice && <div class='toast' role='status'>{notice}</div>}
++    {dialog && accessToken && <SecurityDialog action={dialog} accessToken={accessToken} onClose={() => setDialog(null)}
++      onCompleted={(deleted) => {
++        setDialog(null); setUser(null); setAccessToken(null)
++        setNotice(deleted ? '账户已注销' : '修改成功，请重新登录')
++      }} />}
++  </div>
+ }
+diff --git a/server/src/pages/account/Applications.test.tsx b/server/src/pages/account/Applications.test.tsx
+new file mode 100644
+index 0000000000000000000000000000000000000000..6ff3f6adf0f3a94cf2695d3bc58997868d831896
+--- /dev/null
++++ b/server/src/pages/account/Applications.test.tsx
+@@ -0,0 +1,30 @@
++import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
++import { render } from 'hono/jsx/dom'
++import { fireEvent, getByRole, waitFor } from '@testing-library/dom'
++import Applications from './Applications'
++import { request } from './auth'
++vi.mock('./auth',()=>({request:vi.fn()}))
++let container:HTMLDivElement
++beforeEach(()=>{vi.resetAllMocks();container=document.createElement('div');document.body.appendChild(container)})
++afterEach(()=>{render(null,container);container.remove()})
++describe('portal applications',()=>{
++  it('filters actual consent and supports keyboard tab changes',async()=>{
++    vi.mocked(request).mockResolvedValue({apps:[{clientId:'a',name:'已授权测试应用',authorized:true},{clientId:'b',name:'公开测试应用',authorized:false}]})
++    render(<Applications accessToken='token'/>,container)
++    await waitFor(()=>expect(getByRole(container,'tabpanel').textContent).toContain('已授权测试应用'))
++    expect(getByRole(container,'tabpanel').textContent).not.toContain('公开测试应用')
++    fireEvent.keyDown(getByRole(container,'tab',{name:'已授权应用'}),{key:'ArrowRight'})
++    await waitFor(()=>expect(getByRole(container,'tabpanel').textContent).toContain('公开测试应用'))
++    expect(getByRole(container,'tab',{name:'全部应用'}).getAttribute('aria-selected')).toBe('true')
++    expect(request).toHaveBeenCalledWith('/account/api/apps',{headers:{Authorization:'Bearer token'}})
++  })
++  it('does not present a request failure as an empty catalogue',async()=>{
++    vi.mocked(request).mockRejectedValue(new Error('secret'))
++    render(<Applications accessToken='token'/>,container)
++    await waitFor(()=>expect(getByRole(container,'alert').textContent).toContain('无法读取应用'))
++    expect(container.textContent).not.toContain('暂无应用')
++    vi.mocked(request).mockResolvedValue({apps:[]})
++    fireEvent.click(getByRole(container,'button',{name:'重试'}))
++    await waitFor(()=>expect(container.textContent).toContain('暂无授权应用'))
++  })
++})
+diff --git a/server/src/pages/account/Applications.tsx b/server/src/pages/account/Applications.tsx
+new file mode 100644
+index 0000000000000000000000000000000000000000..d04f533e570b679656c316365fe93e0978648860
+--- /dev/null
++++ b/server/src/pages/account/Applications.tsx
+@@ -0,0 +1,38 @@
++import { useEffect, useRef, useState } from 'hono/jsx'
++import { request } from './auth'
++import Icon from './Icons'
++
++interface App { clientId: string; name: string; authorized: boolean }
++export default function Applications({ accessToken }: { accessToken: string }) {
++  const [apps, setApps] = useState<App[] | null>(null)
++  const [tab, setTab] = useState<'authorized' | 'all'>('authorized')
++  const [error, setError] = useState(false)
++  const [attempt, setAttempt] = useState(0)
++  const tabs = useRef<HTMLDivElement>(null)
++  useEffect(() => {
++    let stale = false
++    setApps(null); setError(false)
++    void request<{ apps: App[] }>('/account/api/apps', { headers: { Authorization: `Bearer ${accessToken}` } })
++      .then((value) => { if (!stale) setApps(value.apps) })
++      .catch(() => { if (!stale) setError(true) })
++    return () => { stale = true }
++  }, [accessToken, attempt])
++  const visible = apps?.filter((app) => tab === 'all' || app.authorized)
++  return <section class='application-card' aria-label='应用管理'>
++    <div class='tabs' role='tablist' aria-label='应用分类' ref={tabs} onKeyDown={(event) => {
++      if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
++      event.preventDefault()
++      const next = event.key === 'Home' ? 'authorized' : event.key === 'End' ? 'all' : tab === 'all' ? 'authorized' : 'all'
++      setTab(next); (tabs.current?.children[next === 'all' ? 1 : 0] as HTMLElement)?.focus()
++    }}>
++      {(['authorized', 'all'] as const).map((key) => <button key={key} id={`tab-${key}`} role='tab' aria-controls='app-panel'
++        aria-selected={tab === key ? 'true' : 'false'} tabIndex={tab === key ? 0 : -1} onClick={() => setTab(key)}>{key === 'all' ? '全部应用' : '已授权应用'}</button>)}
++    </div>
++    <div id='app-panel' role='tabpanel' aria-labelledby={`tab-${tab}`} tabIndex={0}>
++      {error ? <div class='empty' role='alert'><p>无法读取应用</p><button class='btn' onClick={() => setAttempt(attempt + 1)}>重试</button></div>
++        : !apps ? <div class='empty' role='status'>正在加载…</div>
++          : !visible?.length ? <div class='empty'><Icon name='apps' /><p>{tab === 'all' ? '暂无应用' : '暂无授权应用'}</p></div>
++            : <ul class='application-list'>{visible.map((app) => <li key={app.clientId}><Icon name='apps' /><span>{app.name}</span><span class='muted'>{app.authorized ? '已授权' : '未授权'}</span></li>)}</ul>}
++    </div>
++  </section>
++}
+diff --git a/server/src/pages/account/Dialog.tsx b/server/src/pages/account/Dialog.tsx
+new file mode 100644
+index 0000000000000000000000000000000000000000..540c8b4a4937c99afff28e65ac63b95cee632672
+--- /dev/null
++++ b/server/src/pages/account/Dialog.tsx
+@@ -0,0 +1,26 @@
++import { useEffect, useRef } from 'hono/jsx'
++import { Child } from 'hono/jsx'
++
++export default function Dialog({ title, children, onClose, busy = false, danger = false }: {
++  title: string; children: Child; onClose: () => void; busy?: boolean; danger?: boolean;
++}) {
++  const ref = useRef<HTMLDialogElement>(null)
++  useEffect(() => {
++    const previous = document.activeElement as HTMLElement | null
++    const element = ref.current
++    const overflow = document.body.style.overflow
++    document.body.style.overflow = 'hidden'
++    element?.showModal()
++    return () => {
++      // Close the native modal before restoring focus; the background is otherwise still inert.
++      element?.close?.()
++      document.body.style.overflow = overflow
++      if (previous?.isConnected) previous.focus()
++    }
++  }, [])
++  return <dialog ref={ref} class={`portal-dialog${danger ? ' danger-dialog' : ''}`} aria-label={title}
++    onCancel={(event: Event) => { event.preventDefault(); if (!busy) onClose() }}>
++    <div class='dialoghead'><h2>{title}</h2><button type='button' class='close' aria-label='关闭弹窗' disabled={busy} onClick={onClose}>×</button></div>
++    {children}
++  </dialog>
++}
+diff --git a/server/src/pages/account/Icons.tsx b/server/src/pages/account/Icons.tsx
+new file mode 100644
+index 0000000000000000000000000000000000000000..0266d6baa6be6ffa22fbdaec59a7dc4b6f867d93
+--- /dev/null
++++ b/server/src/pages/account/Icons.tsx
+@@ -0,0 +1,17 @@
++const paths: Record<string, string> = {
++  user: 'M20 21v-2a8 8 0 0 0-16 0v2M16 7a4 4 0 1 1-8 0 4 4 0 0 1 8 0',
++  edit: 'm15 4 5 5M4 20l5-1L21 7a2 2 0 0 0-5-5L4 14z',
++  copy: 'M9 9h11v12H9zM15 9V3H3v12h6',
++  check: 'm5 12 4 4L19 6',
++  mail: 'M3 5h18v14H3zM3 5l9 7 9-7',
++  phone: 'M7 2h10v20H7zM11 18h2',
++  apps: 'M3 3h7v7H3zM14 3h7v7h-7zM3 14h7v7H3zM14 14h7v7h-7z',
++  support: 'M4 13v-2a8 8 0 0 1 16 0v2M4 11H2v7h4v-7zM20 11h2v7h-4v-7zM20 18v3h-8',
++  exit: 'M10 4H4v16h6m4-12 4 4-4 4M8 12h12',
++  Google: 'M20 7a9 9 0 1 0 1 8v-4h-9m0 4h5',
++  GitHub: 'M9 19c-5 2-5-3-7-3m14 6v-4c0-1-.3-2-1-3 3 0 6-1 6-6 0-1-.5-3-1.5-4 0-1 0-2-.5-3-2 0-3 1-4 2-2-.5-4-.5-6 0-1-1-2-2-4-2-.5 1-.5 2-.5 3C3.5 6 3 8 3 9c0 5 3 6 6 6-.7 1-1 2-1 3v4',
++}
++
++export default function Icon({ name }: { name: string }) {
++  return <svg viewBox='0 0 24 24' aria-hidden='true'><path d={paths[name] ?? paths.user} /></svg>
++}
+diff --git a/server/src/pages/account/InlineEdit.test.tsx b/server/src/pages/account/InlineEdit.test.tsx
+new file mode 100644
+index 0000000000000000000000000000000000000000..5a5670f8217c3033bd851c164f0ef3facba3d2c9
+--- /dev/null
++++ b/server/src/pages/account/InlineEdit.test.tsx
+@@ -0,0 +1,46 @@
++import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
++import { render } from 'hono/jsx/dom'
++import { fireEvent, getByRole, queryByRole, waitFor } from '@testing-library/dom'
++import InlineEdit from './InlineEdit'
++let container: HTMLDivElement
++beforeEach(() => { container=document.createElement('div'); document.body.appendChild(container) })
++afterEach(() => { render(null,container); container.remove() })
++describe('inline profile editing',()=>{
++  it('does not steal initial focus and cancels without saving',async()=>{
++    const save=vi.fn()
++    render(<InlineEdit label='昵称' value='现有昵称' placeholder='未设置昵称' maxLength={40} required onSave={save}/>,container)
++    expect(document.activeElement).not.toBe(getByRole(container,'button',{name:'编辑昵称'}))
++    fireEvent.click(getByRole(container,'button',{name:'编辑昵称'}))
++    await waitFor(()=>expect(getByRole(container,'textbox',{name:'昵称'})).toBeTruthy())
++    fireEvent.input(getByRole(container,'textbox'),{target:{value:'待保存'}})
++    fireEvent.keyDown(getByRole(container,'textbox'),{key:'Escape'})
++    await waitFor(()=>expect(queryByRole(container,'textbox')).toBeNull())
++    expect(container.textContent).toContain('现有昵称'); expect(save).not.toHaveBeenCalled()
++    await waitFor(()=>expect(document.activeElement).toBe(getByRole(container,'button',{name:'编辑昵称'})))
++  })
++  it('retains the draft and old value when a save fails',async()=>{
++    const save=vi.fn().mockRejectedValue(new Error('internal secret'))
++    render(<InlineEdit label='签名' value='原签名' placeholder='未设置签名' maxLength={120} onSave={save}/>,container)
++    fireEvent.click(getByRole(container,'button',{name:'编辑签名'}))
++    await waitFor(()=>expect(getByRole(container,'textbox')).toBeTruthy())
++    fireEvent.input(getByRole(container,'textbox'),{target:{value:'新签名'}})
++    fireEvent.click(getByRole(container,'button',{name:'保存签名'}))
++    await waitFor(()=>expect(getByRole(container,'alert').textContent).toContain('保存失败'))
++    expect((getByRole(container,'textbox') as HTMLInputElement).value).toBe('新签名')
++    expect(container.textContent).not.toContain('internal secret')
++    fireEvent.click(getByRole(container,'button',{name:'取消编辑签名'}))
++    await waitFor(()=>expect(container.textContent).toContain('原签名'))
++  })
++  it('allows an empty signature and prevents duplicate saves while pending',async()=>{
++    let finish!:()=>void
++    const save=vi.fn(()=>new Promise<void>((resolve)=>{finish=resolve}))
++    render(<InlineEdit label='签名' value='签名' placeholder='未设置签名' maxLength={120} onSave={save}/>,container)
++    fireEvent.click(getByRole(container,'button',{name:'编辑签名'}))
++    await waitFor(()=>expect(getByRole(container,'textbox')).toBeTruthy())
++    fireEvent.input(getByRole(container,'textbox'),{target:{value:''}})
++    fireEvent.click(getByRole(container,'button',{name:'保存签名'}))
++    await waitFor(()=>expect((getByRole(container,'button',{name:'保存签名'}) as HTMLButtonElement).disabled).toBe(true))
++    expect(save).toHaveBeenCalledExactlyOnceWith('')
++    finish(); await waitFor(()=>expect(queryByRole(container,'textbox')).toBeNull())
++  })
++})
+diff --git a/server/src/pages/account/InlineEdit.tsx b/server/src/pages/account/InlineEdit.tsx
+new file mode 100644
+index 0000000000000000000000000000000000000000..73abb17032cdeab4d8864fd0f326d19ca30e5647
+--- /dev/null
++++ b/server/src/pages/account/InlineEdit.tsx
+@@ -0,0 +1,37 @@
++import { useEffect, useRef, useState } from 'hono/jsx'
++import Icon from './Icons'
++
++export default function InlineEdit({ label, value, placeholder, maxLength, required = false, disabled = false, onSave }: {
++  label: string; value: string; placeholder: string; maxLength: number; required?: boolean; disabled?: boolean;
++  onSave: (value: string) => Promise<void>;
++}) {
++  const [editing, setEditing] = useState(false)
++  const [draft, setDraft] = useState(value)
++  const [busy, setBusy] = useState(false)
++  const [error, setError] = useState('')
++  const input = useRef<HTMLInputElement>(null)
++  const trigger = useRef<HTMLButtonElement>(null)
++  const mounted = useRef(false)
++  useEffect(() => {
++    if (!mounted.current) { mounted.current = true; return }
++    if (editing) input.current?.focus(); else trigger.current?.focus()
++  }, [editing])
++  const close = () => { if (!busy) { setEditing(false); setError('') } }
++  return <div class='inline-edit-wrap'>
++    {editing ? <form class='inline-editor' onSubmit={async (event) => {
++      event.preventDefault()
++      if (busy) return
++      const next = (input.current?.value ?? draft).trim()
++      if ((required && !next) || next.length > maxLength || /[\u0000-\u001f\u007f]/.test(next)) { setError('请检查输入内容'); return }
++      setBusy(true); setError('')
++      try { await onSave(next); setEditing(false) } catch { setError('保存失败，请重试') } finally { setBusy(false) }
++    }} onKeyDown={(event) => { if (event.key === 'Escape') { event.preventDefault(); close() } }}>
++      <input ref={input} class='inline-input' aria-label={label} value={draft} maxLength={maxLength} required={required} disabled={busy}
++        onInput={(event) => setDraft((event.target as HTMLInputElement).value)} />
++      <button class='edit-icon primary' aria-label={`保存${label}`} disabled={busy}><Icon name='check' /></button>
++      <button type='button' class='edit-icon' aria-label={`取消编辑${label}`} disabled={busy} onClick={close}>×</button>
++    </form> : <div class='inline-editor'><span class={label === '昵称' ? 'nickname' : 'signature-text'}>{value || placeholder}</span>
++      <button ref={trigger} class='edit-icon' aria-label={`编辑${label}`} disabled={disabled} onClick={() => { setDraft(value); setEditing(true) }}><Icon name='edit' /></button></div>}
++    {error && <p role='alert' class='error-inline'>{error}</p>}
++  </div>
++}
+diff --git a/server/src/pages/account/SecurityDialog.test.tsx b/server/src/pages/account/SecurityDialog.test.tsx
+new file mode 100644
+index 0000000000000000000000000000000000000000..5b57eded322f17eba0c1bef5280a9b0f22e0ed9b
+--- /dev/null
++++ b/server/src/pages/account/SecurityDialog.test.tsx
+@@ -0,0 +1,86 @@
++import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
++import { render } from 'hono/jsx/dom'
++import { fireEvent, getByRole, getByLabelText, waitFor } from '@testing-library/dom'
++import SecurityDialog from './SecurityDialog'
++import * as auth from './auth'
++vi.mock('./auth', async (original)=>({...await original<typeof import('./auth')>(),request:vi.fn(),clearSession:vi.fn()}))
++vi.mock('qrcode',()=>({toCanvas:vi.fn().mockResolvedValue(undefined)}))
++let container: HTMLDivElement
++const completed=vi.fn()
++beforeEach(()=>{
++  vi.resetAllMocks()
++  HTMLDialogElement.prototype.showModal=function(){this.setAttribute('open','')}
++  HTMLDialogElement.prototype.close=function(){this.removeAttribute('open')}
++  container=document.createElement('div');document.body.appendChild(container)
++  vi.mocked(auth.request).mockResolvedValue({email:true,phone:true,password:true,'otp-enable':true,delete:true,passwordRequired:true,otpRequired:false})
++  vi.stubGlobal('fetch',vi.fn())
++})
++afterEach(()=>{render(null,container);container.remove();vi.unstubAllGlobals()})
++const fill=(label:string,value:string)=>fireEvent.input(getByLabelText(container,label),{target:{value}})
++const submit=()=>fireEvent(container.querySelector('form')!,new CustomEvent('submit',{bubbles:true,cancelable:true,detail:{}}))
++const response=(body:unknown,status=200)=>new Response(JSON.stringify(body),{status,headers:{'Content-Type':'application/json'}})
++describe('security dialog',()=>{
++ it('stops showing loading after a capability request fails',async()=>{
++  vi.mocked(auth.request).mockRejectedValue(new Error('fixture offline'))
++  render(<SecurityDialog action='email' accessToken='access' onClose={()=>{}} onCompleted={completed}/>,container)
++  await waitFor(()=>expect(getByRole(container,'alert').textContent).toContain('无法读取安全设置'))
++  expect(container.textContent).not.toContain('正在读取')
++ })
++ it('keeps current identity untouched until the email challenge completes',async()=>{
++  vi.mocked(fetch).mockResolvedValueOnce(response({id:'id',token:'proof',required:['targetCode'],expiresAt:Date.now()+600000}))
++    .mockResolvedValueOnce(response({error:'SECURITY_INVALID_CODE'},400)).mockResolvedValueOnce(response({success:true,deleted:false}))
++  render(<SecurityDialog action='email' accessToken='access' onClose={()=>{}} onCompleted={completed}/>,container)
++  await waitFor(()=>expect(getByLabelText(container,'当前密码')).toBeTruthy())
++  fill('当前密码','Fixture-729!');fill('新邮箱','new@example.test');submit()
++  await waitFor(()=>expect(getByLabelText(container,'新邮箱验证码')).toBeTruthy())
++  expect(completed).not.toHaveBeenCalled()
++  expect((fetch as any).mock.calls[0][1].body).toContain('"target":"new@example.test"')
++  fill('新邮箱验证码','000000');submit()
++  await waitFor(()=>expect(getByRole(container,'alert').textContent).toContain('验证码错误'))
++  expect(completed).not.toHaveBeenCalled()
++  fill('新邮箱验证码','654321');submit()
++  await waitFor(()=>expect(completed).toHaveBeenCalledWith(false))
++  expect(auth.clearSession).toHaveBeenCalledOnce()
++ })
++ it('shows no fake phone success when SMS is unconfigured',async()=>{
++  vi.mocked(auth.request).mockResolvedValue({phone:false})
++  render(<SecurityDialog action='phone' accessToken='access' onClose={()=>{}} onCompleted={completed}/>,container)
++  await waitFor(()=>expect(container.textContent).toContain('当前配置不支持此操作'))
++  expect(container.querySelector('form')).toBeNull()
++  expect(fetch).not.toHaveBeenCalled()
++ })
++ it('requires matching password confirmation before sending',async()=>{
++  render(<SecurityDialog action='password' accessToken='access' onClose={()=>{}} onCompleted={completed}/>,container)
++  await waitFor(()=>expect(getByLabelText(container,'新密码')).toBeTruthy())
++  fill('当前密码','Fixture-729!');fill('新密码','New-Fixture-739!');fill('确认新密码','different');submit()
++  await waitFor(()=>expect(getByRole(container,'alert').textContent).toContain('不一致'))
++  expect(fetch).not.toHaveBeenCalled()
++ })
++ it('displays server-issued OTP setup and requires recovery acknowledgement',async()=>{
++  vi.mocked(fetch).mockResolvedValueOnce(response({id:'id',token:'proof',required:[],setup:{secret:'SERVERSECRET',uri:'otpauth://totp/fixture',recoveryCode:'actual-issued-recovery'}}))
++    .mockResolvedValueOnce(response({success:true,deleted:false}))
++  render(<SecurityDialog action='otp-enable' accessToken='access' onClose={()=>{}} onCompleted={completed}/>,container)
++  await waitFor(()=>expect(getByLabelText(container,'当前密码')).toBeTruthy())
++  fill('当前密码','Fixture-729!');submit()
++  await waitFor(()=>expect(container.textContent).toContain('SERVERSECRET'))
++  submit()
++  await waitFor(()=>expect(container.textContent).toContain('actual-issued-recovery'))
++  const checkbox=getByRole(container,'checkbox') as HTMLInputElement
++  expect(checkbox.required).toBe(true)
++  fireEvent.change(checkbox,{target:{checked:true}})
++  fill('验证器验证码','123456');submit()
++  await waitFor(()=>expect(completed).toHaveBeenCalledWith(false))
++  expect(JSON.parse((fetch as any).mock.calls[1][1].body)).toMatchObject({id:'id',token:'proof',savedRecoveryCode:true,newOtp:'123456'})
++ })
++ it('requires explicit destructive confirmation and does not optimistically log out',async()=>{
++  vi.mocked(fetch).mockResolvedValueOnce(response({id:'id',token:'proof',required:[]})).mockResolvedValueOnce(response({error:'SECURITY_LAST_ADMIN'},409))
++  render(<SecurityDialog action='delete' accessToken='access' onClose={()=>{}} onCompleted={completed}/>,container)
++  await waitFor(()=>expect(getByLabelText(container,'输入“删除账户”确认')).toBeTruthy())
++  fill('当前密码','Fixture-729!');fill('输入“删除账户”确认','删除账户');submit()
++  await waitFor(()=>expect(container.textContent).toContain('确认注销此账户？'))
++  expect(auth.clearSession).not.toHaveBeenCalled()
++  submit()
++  await waitFor(()=>expect(getByRole(container,'alert').textContent).toContain('最后一个超级管理员'))
++  expect(completed).not.toHaveBeenCalled()
++ })
++})
+diff --git a/server/src/pages/account/SecurityDialog.tsx b/server/src/pages/account/SecurityDialog.tsx
+new file mode 100644
+index 0000000000000000000000000000000000000000..3d831487659be1879ae729eb8d4726c49e99098a
+--- /dev/null
++++ b/server/src/pages/account/SecurityDialog.tsx
+@@ -0,0 +1,122 @@
++import { useEffect, useRef, useState } from 'hono/jsx'
++import { toCanvas } from 'qrcode'
++import Dialog from './Dialog'
++import * as auth from './auth'
++
++export type SecurityAction = 'email' | 'phone' | 'password' | 'otp-enable' | 'otp-disable' | 'delete'
++interface Capabilities extends Record<SecurityAction, boolean> { passwordRequired: boolean; otpRequired: boolean }
++interface Challenge {
++  id: string; token: string; required: string[]; expiresAt: number;
++  setup?: { secret: string; uri: string; recoveryCode?: string };
++}
++const titles: Record<SecurityAction, string> = {
++  email: '绑定邮箱', phone: '绑定手机号', password: '修改密码', 'otp-enable': '启用两步验证', 'otp-disable': '禁用两步验证', delete: '删除账户',
++}
++const messages: Record<string, string> = {
++  SECURITY_INVALID_CODE: '验证码错误或已使用，请重试。',
++  SECURITY_RATE_LIMITED: '操作过于频繁，请稍后重试。',
++  SECURITY_REQUEST_EXPIRED: '请求已失效，请关闭后重新操作。',
++  SECURITY_TARGET_UNAVAILABLE: '该邮箱或手机号不可用。',
++  SECURITY_LAST_ADMIN: '不能删除最后一个超级管理员。',
++  SECURITY_UNAVAILABLE: '当前配置不支持此操作。',
++  SECURITY_INVALID_INPUT: '请检查输入；新密码至少 8 位，包含大小写字母、数字和符号。',
++  SECURITY_DELIVERY_FAILED: '验证码未发送成功，请稍后重试。',
++}
++async function post<T>(path: string, token: string, body: unknown): Promise<T> {
++  const controller = new AbortController()
++  const timer = setTimeout(() => controller.abort(), 20000)
++  try {
++    const response = await fetch('/account/api/security/' + path, {
++      method: 'POST', headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
++      body: JSON.stringify(body), cache: 'no-store', signal: controller.signal,
++    })
++    const result = await response.json() as { error?: string }
++    if (!response.ok) throw new Error(response.status === 401 ? '登录已过期，请重新登录。' : messages[result?.error ?? ''] ?? '验证失败或操作未完成，请重试。')
++    return result as T
++  } catch (error) {
++    if (error instanceof Error && Object.values(messages).includes(error.message)) throw error
++    if (error instanceof Error && ['登录已过期，请重新登录。', '验证失败或操作未完成，请重试。'].includes(error.message)) throw error
++    throw new Error('网络请求失败。若已提交，请重新登录核对状态后再试。')
++  } finally { clearTimeout(timer) }
++}
++export default function SecurityDialog({ action, accessToken, onClose, onCompleted }: {
++  action: SecurityAction; accessToken: string; onClose: () => void; onCompleted: (deleted: boolean) => void;
++}) {
++  const [caps, setCaps] = useState<Capabilities | null>(null)
++  const [busy, setBusy] = useState(false)
++  const [error, setError] = useState('')
++  const [values, setValues] = useState<Record<string, string>>({})
++  const [challenge, setChallenge] = useState<Challenge | null>(null)
++  const [step, setStep] = useState(0)
++  const [saved, setSaved] = useState(false)
++  const qr = useRef<HTMLCanvasElement>(null)
++  const active = useRef(true)
++  const submitting = useRef(false)
++  useEffect(() => {
++    active.current = true
++    auth.request<Capabilities>('/account/api/security', { headers: { Authorization: 'Bearer ' + accessToken } })
++      .then((value) => { if (active.current) setCaps(value) }).catch(() => { if (active.current) setError('无法读取安全设置，请关闭后重试。') })
++    return () => { active.current = false }
++  }, [accessToken])
++  useEffect(() => {
++    if (challenge?.setup && qr.current && step === 1) {
++      void toCanvas(qr.current, challenge.setup.uri, { width: 192, margin: 2 }).catch(() => setError('二维码加载失败，请手动输入密钥。'))
++    }
++  }, [challenge, step])
++  const field = (name: string, label: string, type = 'text', maxLength = 1024) => <label class='field'>{label}<input
++    name={name} type={type} required maxLength={maxLength} value={values[name] ?? ''} disabled={busy}
++    autoComplete={type === 'password' ? name === 'password' ? 'current-password' : 'new-password' : name.toLowerCase().includes('code') || name.toLowerCase().includes('otp') ? 'one-time-code' : 'off'}
++    inputMode={name.toLowerCase().includes('code') || name.toLowerCase().includes('otp') ? 'numeric' : undefined}
++    onInput={(event: Event) => { const value = (event.target as HTMLInputElement).value; setValues((previous) => ({ ...previous, [name]: value })) }} /></label>
++  const submit = async (event: Event) => {
++    event.preventDefault()
++    if (submitting.current || !caps?.[action]) return
++    const submitted = Object.fromEntries(new FormData(event.currentTarget as HTMLFormElement))
++    if (!challenge && action === 'password' && submitted.newPassword !== submitted.confirmPassword) { setError('两次输入的新密码不一致。'); return }
++    if (challenge?.setup && step === 1) { setStep(2); setError(''); return }
++    submitting.current = true
++    setBusy(true); setError('')
++    try {
++      if (!challenge) {
++        const next = await post<Challenge>('start', accessToken, { action, ...submitted })
++        if (!active.current) return
++        setValues({}); setChallenge(next); setStep(1)
++      } else {
++        const result = await post<{ deleted: boolean }>('complete', accessToken, {
++          id: challenge.id, token: challenge.token, ...submitted, savedRecoveryCode: submitted.savedRecoveryCode === 'on',
++        })
++        auth.clearSession()
++        if (active.current) onCompleted(result.deleted)
++      }
++    } catch (cause) { if (active.current) setError(cause instanceof Error ? cause.message : '操作未完成。') }
++    finally { submitting.current = false; if (active.current) setBusy(false) }
++  }
++  return <Dialog title={titles[action]} onClose={onClose} busy={busy} danger={action === 'delete'}>
++    {error && <p role='alert' class='error-inline'>{error}</p>}
++    {!caps ? !error && <p role='status'>正在读取…</p> : !caps[action] ? <p role='status'>当前配置不支持此操作。</p> : <form onSubmit={submit}>
++      {action === 'delete' && <p class='danger-warning'>注销后无法恢复。个人资料、登录凭据和应用授权将被清除，必要的安全记录及身份占用记录保留。</p>}
++      {!challenge ? <>
++        {caps.passwordRequired && field('password', '当前密码', 'password')}
++        {caps.otpRequired && field('otp', '验证器验证码', 'text', 6)}
++        {action === 'email' && field('target', '新邮箱', 'email', 254)}
++        {action === 'phone' && field('target', '新手机号（含国家区号，如 +86）', 'tel', 16)}
++        {action === 'password' && <>{field('newPassword', '新密码', 'password')}{field('confirmPassword', '确认新密码', 'password')}</>}
++        {action === 'delete' && field('confirmation', '输入“删除账户”确认', 'text', 10)}
++      </> : <>
++        {challenge.setup && step === 1 ? <div class='otp-setup'><canvas ref={qr} aria-label='验证器二维码' />
++          <code class='secret-value'>{challenge.setup.secret}</code></div> : <>
++          {challenge.required.map((name) => field(name, name === 'targetCode' ? action === 'phone' ? '新手机号验证码' : '新邮箱验证码' : name === 'currentEmailCode' ? '当前邮箱验证码' : '当前 MFA 手机验证码', 'text', 6))}
++          {challenge.setup && <>
++            {challenge.setup.recoveryCode && <><p class='muted'>恢复码</p><code class='secret-value'>{challenge.setup.recoveryCode}</code>
++            <label class='recovery-check'><input name='savedRecoveryCode' type='checkbox' checked={saved} required disabled={busy} onChange={(event: Event) => setSaved((event.target as HTMLInputElement).checked)} />我已安全保存恢复码</label></>}
++            {field('newOtp', '验证器验证码', 'text', 6)}
++          </>}
++          {!challenge.required.length && !challenge.setup && <p>{action === 'delete' ? '确认注销此账户？' : '确认提交此更改？'}</p>}
++        </>}
++      </>}
++      <div class='form-actions'><button class='btn' type='button' disabled={busy} onClick={onClose}>取消</button>
++        <button class={'btn ' + (action === 'delete' ? 'danger-solid' : 'primary')} type='submit' disabled={busy}>{busy ? '正在处理…' : !challenge ? '验证身份' : challenge.setup && step === 1 ? '下一步' : '确认'}</button>
++      </div>
++    </form>}
++  </Dialog>
++}
+diff --git a/server/src/pages/account/SocialAccounts.test.tsx b/server/src/pages/account/SocialAccounts.test.tsx
+index a5aab1e56dd67707a0171a47f7e3b0757cb6f76c..c950333bbfc9ff51cb45f04a5874d85d045014c8 100644
+--- a/server/src/pages/account/SocialAccounts.test.tsx
++++ b/server/src/pages/account/SocialAccounts.test.tsx
+@@ -7,6 +7,7 @@ vi.mock('./auth', () => ({ request: vi.fn() }))
+ let container: HTMLDivElement
+ beforeEach(() => {
+   vi.resetAllMocks()
++  HTMLDialogElement.prototype.showModal = function () { this.setAttribute('open', '') }
+   container = document.createElement('div'); document.body.appendChild(container)
+   vi.mocked(request).mockResolvedValue({ canManage: true, providers: [
+     { provider: 'Google', available: true, bound: false, primary: false, label: null },
+@@ -18,25 +19,29 @@ describe('social account management', () => {
+   it('shows truthful binding status and requires password confirmation', async () => {
+     render(<SocialAccounts accessToken='ordinary-user-token' />, container)
+     await waitFor(() => expect(container.textContent).toContain('github-user'))
+-    expect((getByRole(container, 'button', { name: '绑定 Google' }) as HTMLButtonElement).disabled).toBe(true)
+-    expect((getByRole(container, 'button', { name: '解绑 GitHub' }) as HTMLButtonElement).disabled).toBe(true)
++    fireEvent.click(getByRole(container, 'button', { name: '绑定 Google' }))
++    await waitFor(() => expect(getByRole(container, 'dialog', { name: '绑定 Google' })).toBeTruthy())
++    expect((getByRole(container, 'button', { name: '继续授权' }) as HTMLButtonElement).disabled).toBe(true)
+   })
+   it('cancels unlink without any mutation request', async () => {
+-    vi.spyOn(window, 'confirm').mockReturnValue(false)
++    const nativeConfirm = vi.spyOn(window, 'confirm')
+     render(<SocialAccounts accessToken='token' />, container)
+     await waitFor(() => expect(container.textContent).toContain('github-user'))
+-    fireEvent.input(getByLabelText(container, '确认当前密码'), { target: { value: 'fixture-only' } })
+-    await waitFor(() => expect((getByRole(container, 'button', { name: '解绑 GitHub' }) as HTMLButtonElement).disabled).toBe(false))
+     fireEvent.click(getByRole(container, 'button', { name: '解绑 GitHub' }))
++    await waitFor(() => expect(getByRole(container, 'dialog', { name: '解绑 GitHub' })).toBeTruthy())
++    fireEvent.click(getByRole(container, 'button', { name: '取消' }))
+     expect(request).toHaveBeenCalledTimes(1)
++    expect(nativeConfirm).not.toHaveBeenCalled()
+   })
+   it('clears the typed password and shows an error after rejected binding', async () => {
+     render(<SocialAccounts accessToken='token' />, container)
+     await waitFor(() => expect(container.textContent).toContain('github-user'))
++    fireEvent.click(getByRole(container, 'button', { name: '绑定 Google' }))
++    await waitFor(() => expect(getByRole(container, 'dialog', { name: '绑定 Google' })).toBeTruthy())
+     fireEvent.input(getByLabelText(container, '确认当前密码'), { target: { value: 'fixture-only' } })
+     vi.mocked(request).mockRejectedValueOnce(new Error('Do not display provider details'))
+-    await waitFor(() => expect((getByRole(container, 'button', { name: '绑定 Google' }) as HTMLButtonElement).disabled).toBe(false))
+-    fireEvent.click(getByRole(container, 'button', { name: '绑定 Google' }))
++    await waitFor(() => expect((getByRole(container, 'button', { name: '继续授权' }) as HTMLButtonElement).disabled).toBe(false))
++    fireEvent.click(getByRole(container, 'button', { name: '继续授权' }))
+     await waitFor(() => expect(getByRole(container, 'alert').textContent).toContain('操作未完成'))
+     expect((getByLabelText(container, '确认当前密码') as HTMLInputElement).value).toBe('')
+     expect(container.textContent).not.toContain('Do not display')
+diff --git a/server/src/pages/account/SocialAccounts.tsx b/server/src/pages/account/SocialAccounts.tsx
+index 2a1c1b2a86c5fe0efbc04f00aa6fd60ffcb3bc6d..468aa24f40789eda436e63f8ab506d820da4d254 100644
+--- a/server/src/pages/account/SocialAccounts.tsx
++++ b/server/src/pages/account/SocialAccounts.tsx
+@@ -1,67 +1,63 @@
+ import { useEffect, useState } from 'hono/jsx'
+ import { request } from './auth'
++import Dialog from './Dialog'
++import Icon from './Icons'
+ 
+-interface SocialStatus {
+-  canManage: boolean;
+-  providers: { provider: 'Google' | 'GitHub'; available: boolean; bound: boolean; primary: boolean; label: string | null }[];
+-}
++interface Provider { provider: 'Google' | 'GitHub'; available: boolean; bound: boolean; primary: boolean; label: string | null }
++interface SocialStatus { canManage: boolean; providers: Provider[] }
+ 
+ export default function SocialAccounts({ accessToken }: { accessToken: string }) {
+   const [status, setStatus] = useState<SocialStatus | null>(null)
++  const [selected, setSelected] = useState<Provider | null>(null)
+   const [password, setPassword] = useState('')
+   const [busy, setBusy] = useState(false)
+   const [error, setError] = useState('')
+   const [attempt, setAttempt] = useState(0)
+-  const headers = { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' }
++  const headers = { Authorization: 'Bearer ' + accessToken, 'Content-Type': 'application/json' }
+   useEffect(() => {
+     let stale = false
+-    setBusy(true)
+-    setError('')
++    setStatus(null); setBusy(true); setError('')
+     void request<SocialStatus>('/account/api/social', { headers }).then((value) => {
+       if (!stale) setStatus(value)
+-    }).catch(() => {
+-      if (!stale) setError('无法读取社交账号，请重试或重新登录。')
+-    }).finally(() => { if (!stale) setBusy(false) })
++    }).catch(() => { if (!stale) setError('无法读取社交账号，请重试或重新登录。') })
++      .finally(() => { if (!stale) setBusy(false) })
+     return () => { stale = true }
+   }, [accessToken, attempt])
+-
+-  const act = async (provider: 'Google' | 'GitHub', unlink: boolean) => {
+-    if (busy || !password) return
+-    if (unlink && !window.confirm(`确认解绑 ${provider}？解绑后该社交账号将不能登录此 NAccount。`)) return
+-    setBusy(true)
+-    setError('')
++  const close = () => { setSelected(null); setPassword(''); setError('') }
++  const act = async () => {
++    if (busy || !password || !selected) return
++    setBusy(true); setError('')
+     const secret = password
+     setPassword('')
+     try {
+-      const result = await request<{ authorizeUrl?: string }>(`/account/api/social/${unlink ? 'unlink' : 'start'}`, {
+-        method: 'POST', headers, body: JSON.stringify({ provider, password: secret }),
++      const result = await request<{ authorizeUrl?: string }>('/account/api/social/' + (selected.bound ? 'unlink' : 'start'), {
++        method: 'POST', headers, body: JSON.stringify({ provider: selected.provider, password: secret }),
+       })
+-      if (unlink) { setAttempt(attempt + 1); return }
++      if (selected.bound) { setSelected(null); setAttempt(attempt + 1); return }
+       const url = new URL(result.authorizeUrl ?? '')
+-      if (url.protocol !== 'https:' || url.hostname !== (provider === 'Google' ? 'accounts.google.com' : 'github.com')) throw new Error('Invalid provider URL')
++      if (url.protocol !== 'https:' || url.username || url.password || url.port ||
++        url.hostname !== (selected.provider === 'Google' ? 'accounts.google.com' : 'github.com')) throw new Error('Invalid provider URL')
+       window.location.assign(url.href)
+-    } catch {
+-      setError('操作未完成。请检查当前密码、邮箱验证状态和账号绑定状态后重试。')
+-    } finally { setBusy(false) }
++    } catch { setError('操作未完成。请检查当前密码、邮箱验证状态和账号绑定状态后重试。') }
++    finally { setBusy(false) }
+   }
+-  const button = 'rounded-lg border border-slate-300 px-4 py-2 disabled:opacity-50 focus-visible:outline-2'
+-  return <section aria-labelledby='social-accounts' class='rounded-xl border border-slate-200 bg-white p-6'>
+-    <h2 id='social-accounts' class='text-lg font-semibold mb-4'>社交账号</h2>
+-    {busy && <p role='status'>正在处理…</p>}
+-    {error && <div role='alert'><p>{error}</p><button class={button} disabled={busy} onClick={() => setAttempt(attempt + 1)}>重试社交账号</button></div>}
+-    {status && <>
+-      {!status.canManage && <p>绑定管理需要已验证邮箱和当前账号密码。</p>}
+-      {status.canManage && <label class='flex flex-col gap-2 mb-4'>确认当前密码
+-        <input class='rounded-lg border border-slate-300 p-3' type='password' autoComplete='current-password' value={password}
+-          disabled={busy} onInput={(event) => setPassword((event.target as HTMLInputElement).value)} />
+-      </label>}
+-      <ul class='flex flex-col gap-4'>
+-        {status.providers.map((entry) => <li key={entry.provider} class='flex flex-wrap items-center justify-between gap-3'>
+-          <div><strong>{entry.provider}</strong><p class='text-sm'>{entry.primary ? '原始登录方式' : entry.bound ? `已绑定 · ${entry.label ?? ''}` : entry.available ? '未绑定' : '未配置'}</p></div>
+-          {!entry.primary && <button class={button} disabled={busy || !status.canManage || !password || (!entry.bound && !entry.available)}
+-            onClick={() => act(entry.provider, entry.bound)}>{entry.bound ? `解绑 ${entry.provider}` : `绑定 ${entry.provider}`}</button>}
+-        </li>)}
+-      </ul>
+-    </>}
+-  </section>
+-}
++  return <div aria-label='社交账号'>
++    {busy && !status && <p class='load-status' role='status'>正在读取社交账号…</p>}
++    {error && !selected && <div class='error-inline' role='alert'><p>{error}</p><button class='btn' disabled={busy} onClick={() => setAttempt(attempt + 1)}>重试社交账号</button></div>}
++    {status?.providers.map((entry) => <div class='binding-row' key={entry.provider}><div class='binding-value'><Icon name={entry.provider} />
++      <span>{entry.provider}</span><span class='muted'>{entry.primary ? '原始登录方式' : entry.bound ? entry.label || '已绑定' : entry.available ? '未绑定' : '未配置'}</span></div>
++      {!entry.primary && <button class={'btn' + (entry.bound ? ' danger' : '')} aria-label={(entry.bound ? '解绑' : '绑定') + ' ' + entry.provider}
++        disabled={busy || !status.canManage || (!entry.bound && !entry.available)} onClick={() => { setError(''); setPassword(''); setSelected(entry) }}>{entry.bound ? '解绑' : '绑定'}</button>}
++    </div>)}
++    {selected && <Dialog title={(selected.bound ? '解绑' : '绑定') + ' ' + selected.provider} onClose={close} busy={busy} danger={selected.bound}>
++      <form onSubmit={(event) => { event.preventDefault(); void act() }}>
++        {selected.bound && <p class='danger-warning'>解绑后，将不能再使用此 {selected.provider} 账号登录。</p>}
++        <label class='field'>确认当前密码<input type='password' autoComplete='current-password' value={password} maxLength={1024} required disabled={busy}
++          onInput={(event) => setPassword((event.target as HTMLInputElement).value)} /></label>
++        {error && <p class='error-inline' role='alert'>{error}</p>}
++        <div class='form-actions'><button class='btn' type='button' disabled={busy} onClick={close}>取消</button>
++          <button class={'btn ' + (selected.bound ? 'danger-solid' : 'primary')} disabled={busy || !password}>{busy ? '正在处理…' : selected.bound ? '确认解绑' : '继续授权'}</button></div>
++      </form>
++    </Dialog>}
++  </div>
++}
+\ No newline at end of file
+diff --git a/server/src/pages/account/assets.d.ts b/server/src/pages/account/assets.d.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..09f6e3ca6b4a433ed8d1e52689590e655bcc7074
+--- /dev/null
++++ b/server/src/pages/account/assets.d.ts
+@@ -0,0 +1,4 @@
++declare module '*.svg' {
++  const source: string
++  export default source
++}
+diff --git a/server/src/pages/account/auth.test.ts b/server/src/pages/account/auth.test.ts
+index c3edff3189f5b6a53cda11f3ca6e2d406fcc2de0..733a11c6cfd9811dcae622ceb481fdc6bb6e1842 100644
+--- a/server/src/pages/account/auth.test.ts
++++ b/server/src/pages/account/auth.test.ts
+@@ -117,7 +117,7 @@ describe('portal authorization boundaries', () => {
+   it('reads only the current user endpoint', async () => {
+     fetchMock.mockResolvedValue(Response.json({ authId: 'ordinary-user', emailVerified: true }))
+     expect(await profile(config, 'access')).toMatchObject({ authId: 'ordinary-user' })
+-    expect(fetchMock.mock.calls[0][0]).toBe(`${config.serverUri}/oauth2/v1/userinfo`)
++    expect(fetchMock.mock.calls[0][0]).toBe(`${config.serverUri}/account/api/profile`)
+     expect(fetchMock.mock.calls[0][1].headers).toEqual({ Authorization: 'Bearer access' })
+   })
+   it('clears local state even if remote logout fails, without claiming remote success', async () => {
+diff --git a/server/src/pages/account/auth.ts b/server/src/pages/account/auth.ts
+index 42ca8fe78ba13466158f38aef42c68b33b197680..e9b41ede0d492667abf7ea24308221877346b75d 100644
+--- a/server/src/pages/account/auth.ts
++++ b/server/src/pages/account/auth.ts
+@@ -12,6 +12,12 @@ export interface Profile {
+   emailVerified: boolean;
+   firstName?: string | null;
+   lastName?: string | null;
++  nickname?: string;
++  signature?: string;
++  phone?: string | null;
++  otpEnabled?: boolean;
++  canEdit?: boolean;
++  canUsePolicies?: boolean;
+ }
+ 
+ const transactionKey = 'naccount.portal.transaction'
+@@ -128,7 +134,7 @@ export async function restore(config: PortalConfig): Promise<string | null> {
+   }
+ }
+ 
+-export const profile = (config: PortalConfig, accessToken: string) => request<Profile>(`${config.serverUri}/oauth2/v1/userinfo`, {
++export const profile = (config: PortalConfig, accessToken: string) => request<Profile>(`${config.serverUri}/account/api/profile`, {
+   headers: { Authorization: `Bearer ${accessToken}` },
+ })
+ 
+diff --git a/server/src/pages/account/beaver.svg b/server/src/pages/account/beaver.svg
+new file mode 100644
+index 0000000000000000000000000000000000000000..7d11384235db454bfe6ec60555e98aa0c2559623
+--- /dev/null
++++ b/server/src/pages/account/beaver.svg
+@@ -0,0 +1,5 @@
++<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" fill="none">
++  <title>Beaver - 一句成游</title>
++  <path fill="#22c55e" fill-rule="evenodd" d="M36 27h56c14 0 23 10 23 24v22c0 13-9 22-23 22H59l-29 19 5-19C21 95 12 86 12 73V51c0-14 10-24 24-24Zm-1 21v10h-10v10h10v10h10V68h10V58H45V48Zm59 3a9 9 0 1 0-18 0 9 9 0 0 0 18 0Zm13 21a9 9 0 1 0-18 0 9 9 0 0 0 18 0Z"/>
++  <path fill="#d9ff38" d="M91 51a6 6 0 1 1-12 0 6 6 0 0 1 12 0Zm13 21a6 6 0 1 1-12 0 6 6 0 0 1 12 0Z"/>
++</svg>
+diff --git a/server/src/pages/account/portal.css b/server/src/pages/account/portal.css
+new file mode 100644
+index 0000000000000000000000000000000000000000..5070ca34591f069614e255c36820b8f30e720b8f
+--- /dev/null
++++ b/server/src/pages/account/portal.css
+@@ -0,0 +1,33 @@
++/* Neuro canonical tokens, scoped to the ordinary-user portal. */
++html:has(.naccount){scrollbar-gutter:stable;background:#06080d;color-scheme:dark}
++.naccount{color-scheme:dark;--bg:#06080d;--surface:#090c11;--panel:#0e1218;--control:#111720;--hover:#18222c;--text:#f7f8ef;--muted:#929a9f;--line:rgba(255,255,255,.12);--white:#f3f5f1;--ink:#20252b;--yellow:#d9ff38;--green:#22c55e;--red:#f43f5e;--control-line:color-mix(in srgb,var(--text) 18%,transparent);--line-hover:color-mix(in srgb,var(--text) 32%,transparent);--pressed:color-mix(in srgb,var(--hover) 80%,black);--on-yellow:color-mix(in srgb,var(--yellow) 14%,black);--danger-text:color-mix(in srgb,var(--red) 78%,white);background:var(--bg);color:var(--text);min-height:100dvh;font:14px/1.6 'Segoe UI','Microsoft YaHei',sans-serif}
++.naccount *{box-sizing:border-box}.naccount :is(h1,h2,h3,p){margin:0}.naccount :is(button,input,a){font:inherit}.naccount button{cursor:pointer}.naccount a{color:inherit;text-decoration:none}.naccount svg{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0}
++.naccount :where(button,a,input):focus-visible{outline:2px solid var(--yellow);outline-offset:3px}
++.naccount .top{height:78px;border-bottom:1px solid var(--line);display:flex;align-items:center;padding:0 40px;gap:58px;background:var(--surface)}
++.naccount .brand img{display:block;width:46px;height:46px}.naccount .topnav{display:flex;align-self:stretch;gap:38px}.naccount .topnav a{display:flex;align-items:center;position:relative;color:var(--muted);font-weight:600}.naccount .topnav a:hover,.naccount .topnav a[aria-current=page]{color:var(--text)}.naccount .topnav a[aria-current=page]:after{content:'';position:absolute;bottom:0;height:2px;background:var(--yellow);width:24px;left:calc(50% - 12px)}
++.naccount .topright{margin-left:auto;display:flex;gap:10px}.naccount .user-menu{position:relative}.naccount .user-toggle{width:38px;height:38px;display:grid;place-items:center;padding:0}.naccount .user-dropdown{position:absolute;right:0;top:calc(100% + 10px);width:154px;padding:5px;background:var(--panel);border:1px solid var(--control-line);border-radius:3px;z-index:20}.naccount .user-dropdown button{display:flex;align-items:center;gap:12px;width:100%;padding:11px 12px;background:transparent;color:var(--text);border:0;text-align:left}.naccount .user-dropdown button:hover{background:var(--hover)}
++.naccount .layout{max-width:1080px;margin:auto;padding:36px 24px}.naccount :is(.identity-card,.application-card,.entry-card){width:100%;max-width:520px;margin:0 auto;background:var(--panel);border:1px solid var(--control-line);border-radius:3px;overflow:hidden}
++.naccount .card-cover{position:relative;height:96px;background:var(--surface);border-bottom:1px solid var(--line);overflow:hidden}.naccount .card-cover:after{content:'';position:absolute;right:30px;top:-30px;width:64px;height:150px;transform:skewX(-32deg);border-left:1px solid var(--line);border-right:1px solid var(--line);opacity:.65}
++.naccount .card-body{padding:0 26px 30px}.naccount .card-person{display:flex;gap:16px;align-items:center;margin-top:-40px;position:relative;min-height:112px}.naccount .card-avatar{width:92px;height:92px;border:5px solid var(--panel);border-radius:50%;background:var(--white);color:var(--ink);display:grid;place-items:center;flex-shrink:0}.naccount .card-avatar svg{width:42px;height:42px;stroke-width:1.25}.naccount .card-details{flex:1;min-width:0;padding-top:37px}
++.naccount .nickname{font-size:22px;font-weight:600;overflow-wrap:anywhere;min-width:0}.naccount .card-id-row{display:flex;align-items:center;gap:6px;margin-top:5px;min-width:0}.naccount .card-id{font:11px/1.7 Consolas,monospace;color:var(--muted);overflow-wrap:anywhere;user-select:text}.naccount .inline-editor{display:flex;align-items:center;gap:8px;min-width:0}.naccount .inline-edit-wrap{min-width:0;max-width:100%}.naccount .inline-input{width:100%;min-width:0;padding:7px 10px}.naccount .signature-line{margin-top:12px;min-height:38px}.naccount .signature-text{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--muted)}
++.naccount .binding-row{display:flex;align-items:center;gap:18px;margin-top:16px;padding-top:16px;border-top:1px solid var(--line)}.naccount .binding-value{display:flex;align-items:center;gap:12px;min-width:0}.naccount .binding-value span{overflow-wrap:anywhere;min-width:0}.naccount .binding-value svg{width:18px;height:18px;color:var(--muted)}.naccount .binding-row>.btn{flex-shrink:0}.naccount .muted{color:var(--muted);font-size:12px}
++.naccount .account-actions{display:flex;gap:12px;margin-top:20px;padding-top:18px;border-top:1px solid var(--line)}.naccount .account-actions .btn{flex:1;padding-left:8px;padding-right:8px}
++.naccount .btn{display:inline-flex;justify-content:center;align-items:center;gap:8px;padding:9px 17px;min-height:38px;font-size:12px;white-space:nowrap}.naccount .edit-icon{width:30px;height:30px;display:grid;place-items:center;flex-shrink:0;padding:5px}.naccount .edit-icon svg{width:17px;height:17px}.naccount .close{width:30px;height:30px;padding:0;font-size:22px;line-height:1;display:grid;place-items:center;flex-shrink:0}
++.naccount :is(.btn,.user-toggle,.edit-icon,.close){color:var(--text);background:var(--control);border:1px solid var(--control-line);border-radius:3px;transition:background 160ms,border-color 160ms,color 160ms}
++.naccount :is(.btn,.user-toggle,.edit-icon,.close):hover:not(:disabled){background:var(--hover);border-color:var(--line-hover)}
++.naccount :is(.btn,.user-toggle,.edit-icon,.close):active:not(:disabled){background:var(--pressed);border-color:var(--muted)}
++.naccount .user-toggle[aria-expanded=true]{background:var(--hover);border-color:var(--yellow)}.naccount .edit-icon{color:var(--muted);background:var(--surface);border-color:var(--line)}.naccount .edit-icon:hover:not(:disabled){color:var(--text)}
++.naccount .primary{background:var(--yellow);border-color:var(--yellow);color:var(--on-yellow);font-weight:600}
++.naccount .primary:hover:not(:disabled){background:color-mix(in srgb,var(--yellow) 86%,white);border-color:var(--yellow);color:var(--on-yellow)}.naccount .primary:active:not(:disabled){background:color-mix(in srgb,var(--yellow) 82%,black)}
++.naccount .danger{color:var(--danger-text)}.naccount .danger:hover:not(:disabled){background:color-mix(in srgb,var(--red) 12%,var(--panel));border-color:var(--red)}.naccount .danger:active:not(:disabled){background:color-mix(in srgb,var(--red) 18%,var(--panel))}
++.naccount .danger-solid{background:var(--red);border-color:var(--red);color:var(--bg)}.naccount .danger-solid:hover:not(:disabled){background:color-mix(in srgb,var(--red) 85%,white);border-color:var(--red)}.naccount .danger-solid:active:not(:disabled){background:color-mix(in srgb,var(--red) 88%,black)}
++.naccount :is(.btn,.user-toggle,.edit-icon,.close):disabled{background:var(--surface);border-color:var(--line);border-style:dashed;color:var(--muted);opacity:1;cursor:not-allowed}
++.naccount .application-card{min-height:580px}.naccount .tabs{display:flex;background:var(--surface);padding:14px 26px;gap:8px;border-bottom:1px solid var(--line)}.naccount .tabs button{padding:8px 14px;border:1px solid var(--line);border-radius:2px;font-size:13px;background:var(--control);color:var(--muted);transition:background 160ms,color 160ms}
++.naccount .tabs button:not([aria-selected=true]):hover:not(:disabled){background:var(--hover);border-color:var(--line-hover);color:var(--text)}.naccount .tabs button:not([aria-selected=true]):active:not(:disabled){background:var(--pressed)}.naccount .tabs button[aria-selected=true]{background:var(--white);border-color:var(--white);color:var(--ink);box-shadow:inset 0 -2px 0 var(--yellow)}
++.naccount .empty{min-height:480px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;padding:30px 24px;color:var(--muted)}.naccount .empty svg{width:32px;height:32px}.naccount .application-list{padding:0 26px;margin:0;list-style:none}.naccount .application-list li{display:flex;align-items:center;gap:14px;border-bottom:1px solid var(--line);padding:20px 0;overflow-wrap:anywhere}.naccount .application-list li>.muted{margin-left:auto;white-space:nowrap}
++.naccount .portal-dialog{margin:auto;width:min(480px,calc(100vw - 32px));max-height:calc(100dvh - 32px);padding:28px;border:1px solid var(--control-line);border-radius:3px;background:var(--panel);color:var(--text);overflow-y:auto}.naccount .portal-dialog::backdrop{background:rgba(0,0,0,.7)}.naccount .dialoghead{display:flex;align-items:center;justify-content:space-between;gap:16px;border-bottom:1px solid var(--line);padding-bottom:16px;margin-bottom:22px}.naccount .dialoghead h2{font-size:18px;font-weight:600}.naccount .field{display:flex;flex-direction:column;gap:10px;margin-top:18px}.naccount input{color:var(--text);background:var(--control);border:1px solid var(--control-line);border-radius:3px}.naccount .field input{padding:11px 13px;width:100%}.naccount .form-actions{display:flex;justify-content:flex-end;gap:12px;margin-top:24px}.naccount .danger-dialog{border-top:3px solid var(--red)}.naccount .danger-dialog h2,.naccount .danger-warning{color:var(--danger-text)}.naccount .security-actions{display:flex;flex-wrap:wrap;gap:12px;margin-top:20px}
++.naccount .entry-card{padding:50px 28px;text-align:center}.naccount .entry-card>svg{width:48px;height:48px;margin:auto}.naccount .entry-actions{display:flex;justify-content:center;gap:16px;margin-top:28px}.naccount .error-banner{max-width:520px;margin:0 auto 24px;padding:16px;border:1px solid var(--red);display:flex;gap:16px;align-items:center}.naccount .error-inline{color:var(--danger-text);font-size:12px;margin-top:10px}.naccount .load-status{max-width:520px;margin:0 auto 14px;color:var(--muted)}.naccount .toast{position:fixed;bottom:28px;left:50%;transform:translateX(-50%);max-width:calc(100vw - 32px);padding:12px 20px;border:1px solid var(--control-line);background:var(--panel);z-index:30}
++@media(max-width:680px){.naccount .top{height:65px;padding:0 12px;gap:14px}.naccount .brand img{width:36px;height:36px}.naccount .topnav{gap:14px;font-size:13px;white-space:nowrap}.naccount .topright{gap:6px}.naccount .user-toggle{width:32px;height:32px}.naccount .layout{padding:24px 16px}.naccount .card-body{padding:0 20px 24px}.naccount .card-cover{height:88px}.naccount .card-person{gap:12px;align-items:flex-start}.naccount .card-avatar{width:76px;height:76px}.naccount .card-avatar svg{width:34px;height:34px}.naccount .card-details{padding-top:34px}.naccount .nickname{font-size:19px}.naccount .card-id{font-size:10px}.naccount .binding-row{gap:14px}.naccount .binding-value{gap:8px;font-size:13px}.naccount .account-actions{gap:6px}.naccount .account-actions .btn{font-size:11px}.naccount .tabs{padding:14px 20px}.naccount .tabs button{padding:8px 12px}.naccount .application-card{min-height:500px}.naccount .empty{min-height:420px}.naccount .portal-dialog{padding:20px}}
++@media(prefers-reduced-motion:reduce){.naccount *{transition:none!important;scroll-behavior:auto!important}}
++
++.naccount .otp-setup{display:flex;flex-direction:column;align-items:center;gap:18px}.naccount .secret-value{display:block;padding:12px;margin:12px 0;background:var(--surface);border:1px solid var(--line);overflow-wrap:anywhere;user-select:all}.naccount .recovery-check{display:flex;align-items:center;gap:10px;margin:16px 0}.naccount .recovery-check input{width:18px;height:18px;accent-color:var(--yellow)}
+diff --git a/server/src/routes/account.tsx b/server/src/routes/account.tsx
+index 6bb2f1f433b4c72efe67cce39546a86d63f0ff42..47f39d0eb246e321c7f47f5fa99877bb1b6f7a84 100644
+--- a/server/src/routes/account.tsx
++++ b/server/src/routes/account.tsx
+@@ -4,12 +4,28 @@ import { typeConfig } from 'configs'
+ import { appModel } from 'models'
+ import { authMiddleware } from 'middlewares'
+ import { bodyLimit } from 'hono/body-limit'
++import { HTTPException } from 'hono/http-exception'
+ import * as social from 'services/accountSocial'
++import * as card from 'services/accountProfile'
++import * as security from 'services/accountSecurity'
+ 
+ // This surface never resolves or exposes the administrator application's secret.
+ const account = new Hono<typeConfig.Context>()
+ 
+-account.onError((_error, c) => c.json({ error: 'NACCOUNT_SOCIAL_REQUEST_DENIED' }, 400))
++account.onError((error, c) => {
++  if (c.req.path.startsWith('/account/api/security')) {
++    const status = error instanceof HTTPException ? error.status : 500
++    const message = error instanceof HTTPException && /^SECURITY_[A-Z_]+$/.test(error.message) ? error.message : 'SECURITY_REQUEST_DENIED'
++    return c.json({ error: message }, status)
++  }
++  if (['/account/api/profile', '/account/api/apps'].includes(c.req.path)) {
++    const status = error instanceof HTTPException
++      ? error.status === 401 ? 401 : error.status === 403 || error.message === 'NACCOUNT_SOCIAL_REQUEST_DENIED' ? 403 : error.status === 400 ? 400 : 500
++      : 500
++    return c.json({ error: status === 500 ? 'NACCOUNT_REQUEST_FAILED' : 'NACCOUNT_REQUEST_DENIED' }, status)
++  }
++  return c.json({ error: 'NACCOUNT_SOCIAL_REQUEST_DENIED' }, 400)
++})
+ 
+ account.use('*', async (c, next) => {
+   c.header('Cache-Control', 'no-store')
+@@ -43,6 +59,12 @@ account.get('/account/config', async (c) => {
+ })
+ 
+ account.get('/account/api/social', authMiddleware.spaProfile, social.status)
++account.get('/account/api/profile', authMiddleware.spaProfile, card.profile)
++account.patch('/account/api/profile', bodyLimit({ maxSize: 2048, onError: (c) => c.json({ error: 'REQUEST_TOO_LARGE' }, 413) }), authMiddleware.spaProfile, card.update)
++account.get('/account/api/apps', authMiddleware.spaProfile, card.apps)
++account.get('/account/api/security', authMiddleware.spaProfile, security.status)
++account.post('/account/api/security/start', bodyLimit({ maxSize: 8192 }), authMiddleware.spaProfile, security.start)
++account.post('/account/api/security/complete', bodyLimit({ maxSize: 4096 }), authMiddleware.spaProfile, security.complete)
+ account.post('/account/api/social/start', bodyLimit({ maxSize: 8192 }), authMiddleware.spaProfile, social.start)
+ account.post('/account/api/social/unlink', bodyLimit({ maxSize: 8192 }), authMiddleware.spaProfile, social.unlink)
+ account.get('/account/social/google/callback', (c) => social.callback(c, 'Google'))
+diff --git a/server/src/services/accountEpoch.ts b/server/src/services/accountEpoch.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..2225ab9610e151df169fcd088eb08f1070f8a254
+--- /dev/null
++++ b/server/src/services/accountEpoch.ts
+@@ -0,0 +1,12 @@
++import { Context } from 'hono'
++import { HTTPException } from 'hono/http-exception'
++import { typeConfig } from 'configs'
++import { userModel } from 'models'
++
++export async function freshUser(c: Context<typeConfig.Context>, snapshot: Pick<userModel.Record, 'authId' | 'securityVersion'>) {
++  const current = await userModel.getByAuthId(c.env.DB, snapshot.authId)
++  if (!current || !current.isActive || current.deletedAt || (current.securityVersion ?? 0) !== (snapshot.securityVersion ?? 0)) {
++    throw new HTTPException(401, { message: 'ACCOUNT_SESSION_REVOKED' })
++  }
++  return current
++}
+diff --git a/server/src/services/accountProfile.ts b/server/src/services/accountProfile.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..3c482a5ed8abc35fbabecf2a0beba26f01f0a38b
+--- /dev/null
++++ b/server/src/services/accountProfile.ts
+@@ -0,0 +1,62 @@
++import { Context } from 'hono'
++import { HTTPException } from 'hono/http-exception'
++import { ClientType } from '@melody-auth/shared'
++import { errorConfig, typeConfig } from 'configs'
++import { appModel, userAppConsentModel } from 'models'
++import { actor } from './accountSocial'
++
++interface Card { nickname: string; signature: string; phone: string | null }
++const denied = () => new errorConfig.Forbidden('NACCOUNT_PROFILE_REQUEST_DENIED')
++
++export const profile = async (c: Context<typeConfig.Context>) => {
++  const user = await actor(c)
++  const card = await c.env.DB.prepare('SELECT nickname, signature, phone FROM naccount_profile WHERE userId=$1').bind(user.id).first<Card>()
++  // Keep the portal DTO explicit: never serialize the user model (password, OTP secret, recovery hash).
++  return c.json({
++    authId: user.authId, email: user.email, emailVerified: user.emailVerified,
++    nickname: card?.nickname || [user.firstName, user.lastName].filter(Boolean).join(' '),
++    signature: card?.signature ?? '',
++    phone: card?.phone ?? null,
++    otpEnabled: user.otpVerified,
++    canUsePolicies: !!(user.email && !user.socialAccountId),
++    canEdit: !(c.env.BLOCKED_POLICIES ?? []).includes('update_info'),
++  })
++}
++
++export const update = async (c: Context<typeConfig.Context>) => {
++  const user = await actor(c)
++  if ((c.env.BLOCKED_POLICIES ?? []).includes('update_info')) throw new HTTPException(403)
++  const body = await c.req.json()
++  if (!body || typeof body !== 'object' || Array.isArray(body) || Object.keys(body).length !== 1) throw denied()
++  const key = Object.keys(body)[0]
++  if (key !== 'nickname' && key !== 'signature') throw denied()
++  const value = body[key]
++  if (typeof value !== 'string' || value !== value.trim() || /[\u0000-\u001f\u007f]/.test(value) ||
++    value.length > (key === 'nickname' ? 40 : 120) || (key === 'nickname' && !value)) throw denied()
++  // Only an allowlisted identifier is interpolated. Identity always comes from the validated token.
++  const result = await c.env.DB.prepare(`INSERT INTO naccount_profile (userId, ${key})
++    SELECT id, $1 FROM "user" WHERE id=$2 AND isActive=1 AND deletedAt IS NULL
++    ON CONFLICT(userId) DO UPDATE SET ${key}=excluded.${key}`)
++    .bind(value, user.id).run()
++  if (!result.success || !result.meta.changes) throw denied()
++  return profile(c)
++}
++
++export const apps = async (c: Context<typeConfig.Context>) => {
++  const user = await actor(c)
++  const consents = await userAppConsentModel.getAllByUser(c.env.DB, user.id)
++  const entries = new Map<string, { clientId: string; name: string; authorized: boolean }>()
++  const add = (app: appModel.Record | null, authorized: boolean) => {
++    if (!app || !app.isActive || app.deletedAt || app.type !== ClientType.SPA || app.clientId === c.env.NACCOUNT_PORTAL_CLIENT_ID) return
++    entries.set(app.clientId, { clientId: app.clientId, name: app.name, authorized: authorized || entries.get(app.clientId)?.authorized || false })
++  }
++  for (const consent of consents) add(await appModel.getById(c.env.DB, consent.appId), true)
++  // Own consent is private to this user. Additional discovery is opt-in, never a global app dump.
++  const catalogue = c.env.NACCOUNT_PUBLIC_APP_IDS
++  if (Array.isArray(catalogue)) {
++    for (const clientId of catalogue.slice(0, 100)) {
++      if (typeof clientId === 'string') add(await appModel.getByClientId(c.env.DB, clientId), false)
++    }
++  }
++  return c.json({ apps: [...entries.values()] })
++}
+diff --git a/server/src/services/accountSecurity.ts b/server/src/services/accountSecurity.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..27fb831b5c83d3c277cff364462c85155dfdc42b
+--- /dev/null
++++ b/server/src/services/accountSecurity.ts
+@@ -0,0 +1,186 @@
++import { Context } from 'hono'
++import { HTTPException } from 'hono/http-exception'
++import { isEmail, isStrongPassword } from 'class-validator'
++import { typeConfig } from 'configs'
++import { appModel, userModel } from 'models'
++import { emailService, smsService, userService, mfaService } from 'services'
++import { cryptoUtil } from 'utils'
++import { actor, digest } from './accountSocial'
++
++type C = Context<typeConfig.Context>
++type Action = 'email' | 'phone' | 'password' | 'otp-enable' | 'otp-disable' | 'delete'
++const actions: Action[] = ['email', 'phone', 'password', 'otp-enable', 'otp-disable', 'delete']
++const fail = (message = 'SECURITY_REQUEST_DENIED', status: 400 | 403 | 409 | 429 | 503 = 403): never => { throw new HTTPException(status, { message }) }
++const text = (value: unknown, max = 1024) => typeof value === 'string' && value.length <= max ? value : ''
++const otpCode = (value: unknown) => typeof value === 'string' && /^\d{6}$/.test(value) ? value : ''
++export function emailReady(c: C) {
++  const e = c.env
++  const providers: Record<string, boolean> = {
++    cloudflare: !!(e.CLOUDFLARE_EMAIL && e.CLOUDFLARE_SENDER_ADDRESS), smtp: !!e.SMTP,
++    sendgrid: !!(e.SENDGRID_API_KEY && e.SENDGRID_SENDER_ADDRESS),
++    mailgun: !!(e.MAILGUN_API_KEY && e.MAILGUN_SENDER_ADDRESS),
++    brevo: !!(e.BREVO_API_KEY && e.BREVO_SENDER_ADDRESS),
++    resend: !!(e.RESEND_API_KEY && e.RESEND_SENDER_ADDRESS),
++    postmark: !!(e.POSTMARK_API_KEY && e.POSTMARK_SENDER_ADDRESS),
++  }
++  return e.EMAIL_PROVIDER_NAME ? !!providers[e.EMAIL_PROVIDER_NAME] : Object.values(providers).some(Boolean)
++}
++const smsReady = (c: C) => !!(c.env.TWILIO_ACCOUNT_ID && c.env.TWILIO_AUTH_TOKEN && c.env.TWILIO_SENDER_NUMBER)
++async function capabilities(c: C, user: userModel.Record) {
++  const app = await appModel.getByClientId(c.env.DB, c.env.NACCOUNT_PORTAL_CLIENT_ID!)
++  const mfa = app && mfaService.getAppMfaConfig(app)
++  const forcedOtp = mfa?.requireOtpMfa ?? c.env.OTP_MFA_IS_REQUIRED
++  const emailRequired = !!((mfa?.requireEmailMfa ?? c.env.EMAIL_MFA_IS_REQUIRED) || user.mfaTypes.includes('email'))
++  const smsRequired = !!((mfa?.requireSmsMfa ?? c.env.SMS_MFA_IS_REQUIRED) || user.mfaTypes.includes('sms'))
++  const otpEnabled = !!user.otpVerified
++  const remaining = user.mfaTypes.filter((value) => value !== 'otp')
++  const enforced = mfa?.enforceOneMfaEnrollment ?? c.env.ENFORCE_ONE_MFA_ENROLLMENT ?? []
++  const forcedOne = enforced.length > 0 && !remaining.some((value) => enforced.includes(value as userModel.MfaType))
++  const blocked = c.env.BLOCKED_POLICIES ?? []
++  const canProve = !!user.password || !!(user.email && user.emailVerified && emailReady(c))
++  return {
++    passwordRequired: !!user.password, otpRequired: !!(forcedOtp || otpEnabled || user.mfaTypes.includes('otp')), emailRequired, smsRequired, recoveryEnabled: !!c.env.ENABLE_RECOVERY_CODE,
++    email: canProve && emailReady(c) && !blocked.includes('change_email'),
++    phone: canProve && smsReady(c),
++    password: canProve && !user.socialAccountId && !!c.env.ENABLE_PASSWORD_RESET && !c.env.ENABLE_PASSWORDLESS_SIGN_IN && !blocked.includes('change_password'),
++    'otp-enable': canProve && !otpEnabled && !user.mfaTypes.includes('otp') && !blocked.includes('reset_mfa'),
++    'otp-disable': canProve && otpEnabled && !forcedOtp && !forcedOne && !blocked.includes('reset_mfa'),
++    delete: canProve,
++  }
++}
++export const status = async (c: C) => c.json(await capabilities(c, await actor(c)))
++
++// Fixed-window counters are incremented atomically in D1; no KV read/modify/write race.
++async function limit(c: C, bucket: string, maximum: number, duration: number) {
++  const now = Date.now()
++  const row = await c.env.DB.prepare(
++    'INSERT INTO naccount_security_limit(bucket,count,expiresAt) VALUES(?,1,?) ON CONFLICT(bucket) DO UPDATE SET count=CASE WHEN expiresAt<=? THEN 1 ELSE count+1 END, expiresAt=CASE WHEN expiresAt<=? THEN ? ELSE expiresAt END RETURNING count',
++  ).bind(bucket, now + duration, now, now, now + duration).first<{ count: number }>()
++  if (!row || row.count > maximum) fail('SECURITY_RATE_LIMITED', 429)
++}
++async function consumeOtp(c: C, userId: number, secret: string, code: unknown) {
++  const clean = otpCode(code)
++  const step = clean ? await cryptoUtil.verifyTotp(secret, clean) : null
++  if (step === null) fail('SECURITY_INVALID_CODE', 400)
++  const result = await c.env.DB.prepare('INSERT OR IGNORE INTO naccount_otp_use(userId,secretHash,step) VALUES(?,?,?)')
++    .bind(userId, await digest(secret), step).run()
++  if (!result.meta.changes) fail('SECURITY_INVALID_CODE', 400)
++}
++interface Stored {
++  id: string; userId: number; version: number; action: Action; target: string;
++  guard: string; payload: string; proofs: string; tokenHash: string; expiresAt: number; attempts: number; ready: number; used: number;
++}
++export async function start(c: C) {
++  const user = await actor(c)
++  const body = await c.req.json()
++  const action = body?.action as Action
++  if (!actions.includes(action)) fail()
++  const caps = await capabilities(c, user)
++  if (!caps[action]) fail('SECURITY_UNAVAILABLE', 409)
++  await limit(c, 'start:' + user.id, 6, 3600000)
++  await limit(c, 'ip:' + await digest(c.req.header('CF-Connecting-IP') ?? 'local'), 30, 3600000)
++  await limit(c, 'cooldown:' + user.id, 1, 30000)
++  if (user.password) {
++    const password = text(body.password)
++    if (!password || !user.email) fail()
++    const verified = await userService.verifySignIn(c, user.email!, (record) => record.id === user.id && !!record.password && cryptoUtil.bcryptCompare(password, record.password))
++    if (verified.id !== user.id) fail()
++  }
++  if (caps.otpRequired) await consumeOtp(c, user.id, user.otpSecret, body.otp)
++  let target = ''
++  const payload: Record<string, string> = {}
++  if (action === 'email') {
++    target = text(body.target, 254).trim().toLowerCase()
++    if (!isEmail(target) || target === user.email?.trim().toLowerCase()) fail('SECURITY_INVALID_INPUT', 400)
++    if (await c.env.DB.prepare('SELECT id FROM user WHERE lower(trim(email))=? AND deletedAt IS NULL AND id<>?').bind(target, user.id).first()) fail('SECURITY_TARGET_UNAVAILABLE', 409)
++  }
++  if (action === 'phone') {
++    target = text(body.target, 16).trim()
++    if (!/^\+[1-9]\d{1,14}$/.test(target)) fail('SECURITY_INVALID_INPUT', 400)
++    if (await c.env.DB.prepare('SELECT userId FROM naccount_profile WHERE phone=?').bind(target).first()) fail('SECURITY_TARGET_UNAVAILABLE', 409)
++  }
++  if (action === 'password') {
++    const password = text(body.newPassword)
++    if (!password || !isStrongPassword(password) || (user.password && cryptoUtil.bcryptCompare(password, user.password))) fail('SECURITY_INVALID_INPUT', 400)
++    payload.password = cryptoUtil.bcryptText(password)
++  }
++  if (action === 'delete' && body.confirmation !== '删除账户') fail('SECURITY_INVALID_INPUT', 400)
++  let setup: { secret: string; uri: string; recoveryCode?: string } | undefined
++  if (action === 'otp-enable') {
++    const secret = cryptoUtil.genOtpSecret()
++    const recovery = c.env.ENABLE_RECOVERY_CODE ? await cryptoUtil.genRecoveryCode() : null
++    payload.secret = secret
++    payload.recoveryHash = recovery?.recoveryHash ?? ''
++    payload.mfaTypes = [...new Set([...user.mfaTypes, 'otp'])].join(',')
++    setup = { secret, uri: 'otpauth://totp/' + encodeURIComponent('NAccount:' + (user.email || user.authId)) + '?secret=' + secret + '&issuer=NAccount&algorithm=SHA1&digits=6&period=30', ...(recovery ? { recoveryCode: recovery.recoveryCode } : {}) }
++  }
++  if (action === 'otp-disable') payload.mfaTypes = user.mfaTypes.filter((value) => value !== 'otp').join(',')
++  const id = crypto.randomUUID()
++  const token = crypto.randomUUID() + crypto.randomUUID()
++  const guard = JSON.stringify({ password: user.password ?? '', email: user.email ?? '', otpSecret: user.otpSecret, mfaTypes: user.mfaTypes.join(','), recoveryCodeHash: user.recoveryCodeHash ?? '',
++    emailVerified: Number(user.emailVerified), otpVerified: Number(user.otpVerified), smsPhoneNumber: user.smsPhoneNumber ?? '', smsPhoneNumberVerified: Number(user.smsPhoneNumberVerified), capabilities: caps })
++  const now = Date.now()
++  await c.env.DB.prepare('DELETE FROM naccount_security_request WHERE expiresAt<=?').bind(now).run()
++  await c.env.DB.prepare('DELETE FROM naccount_security_limit WHERE expiresAt<=?').bind(now).run()
++  await c.env.DB.prepare('DELETE FROM naccount_otp_use WHERE step<?').bind(Math.floor(now / 30000) - 3).run()
++  await c.env.DB.prepare('INSERT INTO naccount_security_request(id,userId,version,action,target,guard,payload,tokenHash,createdAt,expiresAt) VALUES(?,?,?,?,?,?,?,?,?,?)')
++    .bind(id, user.id, user.securityVersion ?? 0, action, target, guard, JSON.stringify(payload), await digest(token), now, now + 600000).run()
++  const proofs: Record<string, string> = {}
++  const required: string[] = []
++  const send = async (name: string, address: string, phone: boolean) => {
++    await limit(c, 'target:' + await digest(address), 6, 3600000)
++    const code = phone ? await smsService.sendSmsMfa(c, address, user.locale) : await emailService.sendChangeEmailVerificationCode(c, address, user.locale, user.orgSlug)
++    if (!code) fail('SECURITY_DELIVERY_FAILED', 503)
++    proofs[name] = await digest(id + ':' + name + ':' + code)
++    required.push(name)
++  }
++  try {
++    if (!user.password || caps.emailRequired) {
++      if (!user.email || !user.emailVerified || !emailReady(c)) fail('SECURITY_UNAVAILABLE', 409)
++      await send('currentEmailCode', user.email!, false)
++    }
++    if (caps.smsRequired) {
++      if (!user.smsPhoneNumber || !user.smsPhoneNumberVerified || !smsReady(c)) fail('SECURITY_UNAVAILABLE', 409)
++      await send('currentSmsCode', user.smsPhoneNumber!, true)
++    }
++    if (action === 'email' || action === 'phone') await send('targetCode', target, action === 'phone')
++    await c.env.DB.prepare('UPDATE naccount_security_request SET proofs=?,ready=1 WHERE id=?').bind(JSON.stringify(proofs), id).run()
++  } catch (error) {
++    await c.env.DB.prepare('DELETE FROM naccount_security_request WHERE id=?').bind(id).run()
++    if (error instanceof HTTPException) throw error
++    fail('SECURITY_DELIVERY_FAILED', 503)
++  }
++  return c.json({ id, token, action, required, setup, expiresAt: now + 600000 })
++}
++export async function complete(c: C) {
++  const user = await actor(c)
++  const body = await c.req.json()
++  const id = text(body?.id, 64)
++  const tokenHash = await digest(text(body?.token, 150))
++  const request = await c.env.DB.prepare('UPDATE naccount_security_request SET attempts=attempts+1 WHERE id=? AND userId=? AND tokenHash=? AND version=? AND ready=1 AND used=0 AND attempts<5 AND expiresAt>? RETURNING *')
++    .bind(id, user.id, tokenHash, user.securityVersion ?? 0, Date.now()).first<Stored>()
++  if (!request) fail('SECURITY_REQUEST_EXPIRED', 409)
++  const currentCaps = await capabilities(c, user)
++  if (!currentCaps[request!.action] || JSON.stringify(currentCaps) !== JSON.stringify(JSON.parse(request!.guard).capabilities)) fail('SECURITY_UNAVAILABLE', 409)
++  const proofs = JSON.parse(request!.proofs) as Record<string, string>
++  for (const [key, expected] of Object.entries(proofs)) {
++    if (!otpCode(body[key]) || await digest(id + ':' + key + ':' + body[key]) !== expected) fail('SECURITY_INVALID_CODE', 400)
++  }
++  if (request!.action === 'otp-enable') {
++    const payload = JSON.parse(request!.payload)
++    if (payload.recoveryHash && body.savedRecoveryCode !== true) fail('SECURITY_INVALID_INPUT', 400)
++    await consumeOtp(c, user.id, payload.secret, body.newOtp)
++  }
++  try {
++    // Trigger validates the original identity snapshot and applies the mutation in the same transaction.
++    const result = await c.env.DB.prepare("UPDATE naccount_security_request SET used=1,guard='{}',payload='{}',proofs='{}',tokenHash='' WHERE id=? AND used=0 AND version=? AND attempts<=5 AND expiresAt>?")
++      .bind(id, user.securityVersion ?? 0, Date.now()).run()
++    if (!result.meta.changes) fail('SECURITY_REQUEST_EXPIRED', 409)
++  } catch (error) {
++    const message = String(error)
++    if (message.includes('security_last_admin')) fail('SECURITY_LAST_ADMIN', 409)
++    if (message.includes('security_email_unavailable') || message.includes('UNIQUE constraint')) fail('SECURITY_TARGET_UNAVAILABLE', 409)
++    fail('SECURITY_REQUEST_EXPIRED', 409)
++  }
++  return c.json({ success: true, signInRequired: true, deleted: request!.action === 'delete' })
++}
+diff --git a/server/src/services/accountSocial.ts b/server/src/services/accountSocial.ts
+index 8c34966ef399e1e73e660e0b85d5e3690cef4a27..d2ad5b3dae1777af943b830780ad15375139c27c 100644
+--- a/server/src/services/accountSocial.ts
++++ b/server/src/services/accountSocial.ts
+@@ -33,10 +33,10 @@ export const actor = async (c: Context<typeConfig.Context>) => {
+   // NAccount's transactional binding contract is implemented and validated for Cloudflare D1.
+   if (c.env.PG_CONNECTION_STRING) throw denied()
+   const token = c.get('access_token_body')
+-  if (!token || !token.sub || !token.scope.split(' ').includes('profile')) throw denied()
++  if (!token || !token.sub || token.impersonatedBy || !token.scope.split(' ').includes('profile')) throw denied()
+   await portalClient(c, token.azp)
+   const user = await userModel.getByAuthId(c.env.DB, token.sub)
+-  if (!user || !user.isActive || user.deletedAt) throw denied()
++  if (!user || !user.isActive || user.deletedAt || (user.securityVersion ?? 0) !== (token.securityVersion ?? 0)) throw denied()
+   return user
+ }
+ 
+diff --git a/server/src/services/identity.ts b/server/src/services/identity.ts
+index 9cd3186fd611e92a2b2e7d1c2e740b8ae6783cde..37ce018fcd97a97b6ebb7681f5380f65cfd59a3c 100644
+--- a/server/src/services/identity.ts
++++ b/server/src/services/identity.ts
+@@ -1,3 +1,4 @@
++import { freshUser } from './accountEpoch'
+ import { Context } from 'hono'
+ import { env } from 'hono/adapter'
+ import {
+@@ -97,7 +98,7 @@ const verifyAuthCodeMfaAndConsent = async (
+ ) => {
+   const isSocialLogin = !!authCodeBody.user.socialAccountId
+   const bypassLocalMfa = isSocialLogin &&
+-    variableConfig.SocialSignInConfig.ExternalSignInCanBypassLocalMfa
++    variableConfig.SocialSignInConfig.ExternalSignInCanBypassLocalMfa && authCodeBody.user.mfaTypes.length === 0
+ 
+   const { ENABLE_PASSWORDLESS_SIGN_IN: enablePasswordlessSignIn } = env(c)
+ 
+@@ -206,6 +207,7 @@ export const ensureAuthCodeIsSecured = async (
+   authCodeBody: typeConfig.AuthCodeBody,
+   options: { persistAuthCode?: boolean } = {},
+ ) => {
++  await freshUser(c, authCodeBody.user)
+   if (authCodeBody.isSecured) return
+ 
+   await verifyAuthCodeMfaAndConsent(
+@@ -233,6 +235,7 @@ export const processPostAuthorize = async (
+   authCodeBody: typeConfig.AuthCodeBody,
+   options: { persistAuthCode?: boolean } = {},
+ ) => {
++  await freshUser(c, authCodeBody.user)
+   const basicInfo = {
+     code: authCode,
+     redirectUri: authCodeBody.request.redirectUri,
+@@ -262,7 +265,7 @@ export const processPostAuthorize = async (
+ 
+   const isSocialLogin = !!authCodeBody.user.socialAccountId
+   const bypassLocalMfa = isSocialLogin &&
+-    variableConfig.SocialSignInConfig.ExternalSignInCanBypassLocalMfa
++    variableConfig.SocialSignInConfig.ExternalSignInCanBypassLocalMfa && authCodeBody.user.mfaTypes.length === 0
+ 
+   const requirePasswordlessVerify =
+     step < 1 &&
+@@ -346,6 +349,7 @@ export const processPostAuthorize = async (
+       c.env.KV,
+       authCodeBody.user.id,
+       cookieValue,
++      authCodeBody.user.securityVersion ?? 0,
+     )
+ 
+     if (isValid) {
+@@ -381,6 +385,7 @@ export const processPostAuthorize = async (
+       c.env.KV,
+       authCodeBody.user.id,
+       cookieValue,
++      authCodeBody.user.securityVersion ?? 0,
+     )
+ 
+     if (isValid) {
+@@ -416,6 +421,7 @@ export const processPostAuthorize = async (
+       c.env.KV,
+       authCodeBody.user.id,
+       cookieValue,
++      authCodeBody.user.securityVersion ?? 0,
+     )
+ 
+     if (isValid) {
+diff --git a/server/src/services/jwt.ts b/server/src/services/jwt.ts
+index 61298683faea7c09af218225c218399c4bcb52e6..01fc434dba572801e17cc40c904ba2a3bc6a327f 100644
+--- a/server/src/services/jwt.ts
++++ b/server/src/services/jwt.ts
+@@ -13,6 +13,7 @@ import {
+   errorConfig, messageConfig, typeConfig,
+ } from 'configs'
+ import { kvService } from 'services'
++import { freshUser } from './accountEpoch'
+ import {
+   cryptoUtil, loggerUtil,
+ } from 'utils'
+@@ -161,6 +162,9 @@ export const getAccessTokenBody = async (
+     throw new errorConfig.UnAuthorized(messageConfig.RequestError.WrongAccessToken)
+   }
+ 
++  if (accessTokenBody.tokenType !== 'service') {
++    await freshUser(context, { authId: accessTokenBody.sub, securityVersion: accessTokenBody.securityVersion })
++  }
+   return accessTokenBody
+ }
+ 
+@@ -173,6 +177,7 @@ export const genAccessToken = async (
+   scope: string,
+   roles?: string[] | null,
+   impersonatedBy?: string | null,
++  securityVersion = 0,
+ ) => {
+   const {
+     SPA_ACCESS_TOKEN_EXPIRES_IN,
+@@ -181,6 +186,7 @@ export const genAccessToken = async (
+   } = env(c)
+ 
+   const isSpa = type === ClientType.SPA
++  if (isSpa) await freshUser(c, { authId: sub, securityVersion })
+   const accessTokenExpiresIn = isSpa
+     ? SPA_ACCESS_TOKEN_EXPIRES_IN
+     : S2S_ACCESS_TOKEN_EXPIRES_IN
+@@ -192,6 +198,8 @@ export const genAccessToken = async (
+     scope,
+     iat: currentTimestamp,
+     exp: accessTokenExpiresAt,
++    tokenType: isSpa ? 'user' : 'service',
++    ...(isSpa ? { securityVersion } : {}),
+   }
+   if (roles) accessTokenBody.roles = roles
+   if (impersonatedBy) accessTokenBody.impersonatedBy = impersonatedBy
+diff --git a/server/src/services/kv.ts b/server/src/services/kv.ts
+index 1af07bc0c3e53b40fb2e6e8b9696396339e1a18a..2b31acbdaa2b38905dd4847f85507d517151c2c6 100644
+--- a/server/src/services/kv.ts
++++ b/server/src/services/kv.ts
+@@ -1121,11 +1121,13 @@ export const verifyEmailMfaRememberDevice = async (
+   kv: KVNamespace,
+   userId: number,
+   cookieValue?: string,
++  securityVersion = 0,
+ ) => {
+   if (!cookieValue) return false
+ 
+   const [deviceId, cookieCode] = cookieValue.split('-')
+   if (!deviceId || !cookieCode) return false
++  if (securityVersion > 0 && !deviceId.startsWith(String(securityVersion) + '.')) return false
+ 
+   const key = adapterConfig.getKVKey(
+     adapterConfig.BaseKVKey.EmailMfaRememberDevice,
+@@ -1176,11 +1178,13 @@ export const verifyOtpMfaRememberDevice = async (
+   kv: KVNamespace,
+   userId: number,
+   cookieValue?: string,
++  securityVersion = 0,
+ ) => {
+   if (!cookieValue) return false
+ 
+   const [deviceId, cookieCode] = cookieValue.split('-')
+   if (!deviceId || !cookieCode) return false
++  if (securityVersion > 0 && !deviceId.startsWith(String(securityVersion) + '.')) return false
+ 
+   const key = adapterConfig.getKVKey(
+     adapterConfig.BaseKVKey.OtpMfaRememberDevice,
+@@ -1231,11 +1235,13 @@ export const verifySmsMfaRememberDevice = async (
+   kv: KVNamespace,
+   userId: number,
+   cookieValue?: string,
++  securityVersion = 0,
+ ) => {
+   if (!cookieValue) return false
+ 
+   const [deviceId, cookieCode] = cookieValue.split('-')
+   if (!deviceId || !cookieCode) return false
++  if (securityVersion > 0 && !deviceId.startsWith(String(securityVersion) + '.')) return false
+ 
+   const key = adapterConfig.getKVKey(
+     adapterConfig.BaseKVKey.SmsMfaRememberDevice,
+diff --git a/server/src/services/mfa.ts b/server/src/services/mfa.ts
+index b3f4ff61b6a40f2d409a2dcea7ad1c942ffc5c3c..c0c10c07379ff1bb20f0dc8f0db52013d82dae51 100644
+--- a/server/src/services/mfa.ts
++++ b/server/src/services/mfa.ts
+@@ -660,11 +660,12 @@ export const rememberEmailMfaDevice = async (
+   c: Context<typeConfig.Context>,
+   rememberDevice: boolean,
+   userId: number,
++  securityVersion = 0,
+ ) => {
+   const { ENABLE_MFA_REMEMBER_DEVICE: enableMfaRememberDevice } = env(c)
+ 
+   if (rememberDevice && enableMfaRememberDevice) {
+-    const deviceId = genRandomString(24)
++    const deviceId = String(securityVersion) + '.' + genRandomString(24)
+     const cookieValue = genRandomString(128)
+ 
+     const cookieKey = adapterConfig.getEmailMfaRememberDeviceCookieKey(userId)
+@@ -694,11 +695,12 @@ export const rememberSmsMfaDevice = async (
+   c: Context<typeConfig.Context>,
+   rememberDevice: boolean,
+   userId: number,
++  securityVersion = 0,
+ ) => {
+   const { ENABLE_MFA_REMEMBER_DEVICE: enableMfaRememberDevice } = env(c)
+ 
+   if (rememberDevice && enableMfaRememberDevice) {
+-    const deviceId = genRandomString(24)
++    const deviceId = String(securityVersion) + '.' + genRandomString(24)
+     const cookieValue = genRandomString(128)
+ 
+     const cookieKey = adapterConfig.getSmsMfaRememberDeviceCookieKey(userId)
+@@ -728,11 +730,12 @@ export const rememberOtpMfaDevice = async (
+   c: Context<typeConfig.Context>,
+   rememberDevice: boolean,
+   userId: number,
++  securityVersion = 0,
+ ) => {
+   const { ENABLE_MFA_REMEMBER_DEVICE: enableMfaRememberDevice } = env(c)
+ 
+   if (rememberDevice && enableMfaRememberDevice) {
+-    const deviceId = genRandomString(24)
++    const deviceId = String(securityVersion) + '.' + genRandomString(24)
+     const cookieValue = genRandomString(128)
+ 
+     const cookieKey = adapterConfig.getOtpMfaRememberDeviceCookieKey(userId)
+diff --git a/server/src/services/oauth.ts b/server/src/services/oauth.ts
+index b21394d4a507d390a719e2dccc325ee457a05c1b..2eb2539c4b95834dfe68250000f70600584f74fb 100644
+--- a/server/src/services/oauth.ts
++++ b/server/src/services/oauth.ts
+@@ -116,6 +116,8 @@ export const handleAuthCodeTokenExchange = async (
+     authInfo.request.clientId,
+     scope,
+     userRoles,
++    undefined,
++    authInfo.user.securityVersion ?? 0,
+   )
+ 
+   const result: PostTokenByAuthCodeRes = {
+@@ -141,6 +143,7 @@ export const handleAuthCodeTokenExchange = async (
+       refreshToken,
+       {
+         authId,
++        securityVersion: authInfo.user.securityVersion ?? 0,
+         clientId: authInfo.request.clientId,
+         scope,
+         roles: userRoles,
+@@ -231,7 +234,7 @@ export const handleRefreshTokenTokenExchange = async (
+     c,
+     refreshTokenBody.authId,
+   )
+-  if (!user || !user.isActive) {
++  if (!user || !user.isActive || user.deletedAt || (user.securityVersion ?? 0) !== (refreshTokenBody.securityVersion ?? 0)) {
+     loggerUtil.triggerLogger(
+       c,
+       loggerUtil.LoggerLevel.Warn,
+@@ -256,6 +259,7 @@ export const handleRefreshTokenTokenExchange = async (
+     refreshTokenBody.scope,
+     roles,
+     refreshTokenBody.impersonatedBy,
++    refreshTokenBody.securityVersion ?? 0,
+   )
+ 
+   const result: PostTokenByRefreshTokenRes = {
+diff --git a/server/src/services/session.ts b/server/src/services/session.ts
+index 0607d2d48eb963128097949a5b9b96b00f686a65..2c6f70053fea4618a6e96380087341b5e1c809ef 100644
+--- a/server/src/services/session.ts
++++ b/server/src/services/session.ts
+@@ -4,6 +4,7 @@ import {
+   adapterConfig, typeConfig,
+ } from 'configs'
+ import { timeUtil } from 'utils'
++import { freshUser } from './accountEpoch'
+ 
+ export const setAuthInfoSession = (
+   c: Context<typeConfig.Context>,
+@@ -26,7 +27,7 @@ export const setAuthInfoSession = (
+   }
+ }
+ 
+-export const getAuthInfoSession = (
++export const getAuthInfoSession = async (
+   c: Context<typeConfig.Context>, clientId: string,
+ ) => {
+   const { SERVER_SESSION_EXPIRES_IN: sessionExpiresIn } = env(c)
+@@ -35,7 +36,7 @@ export const getAuthInfoSession = (
+     const key = adapterConfig.getAuthInfoSessionKeyByClientId(clientId)
+     const stored = session.get(key) as typeConfig.AuthCodeBody & {expiresOn: number} | null
+     if (!stored || timeUtil.getCurrentTimestamp() > stored.expiresOn) return null
+-
++    try { await freshUser(c, stored.user) } catch { session.set(key, null); return null }
+     return stored
+   }
+   return null
+diff --git a/server/src/tests/mock.ts b/server/src/tests/mock.ts
+index b18fcb5d7fcd5c5cf4cb8207b6fd5669e5d7146c..b8f615821ac99425d44ec5b5da9b06d5f6e0949d 100644
+--- a/server/src/tests/mock.ts
++++ b/server/src/tests/mock.ts
+@@ -136,7 +136,7 @@ const getDbMock = (db: Database) => ({
+           const result = stmt.run(...params)
+           return {
+             success: true,
+-            meta: { last_row_id: result.lastInsertRowid },
++            meta: { last_row_id: result.lastInsertRowid, changes: result.changes },
+           }
+         },
+       }),
+diff --git a/server/src/utils/request.test.ts b/server/src/utils/request.test.ts
+index 2cc3a102e6912965f22e4f3ee2a04bd08882f818..420dde49c01d0aa0ac303f3e86bb32637f385b22 100644
+--- a/server/src/utils/request.test.ts
++++ b/server/src/utils/request.test.ts
+@@ -1,10 +1,34 @@
+ import {
+   describe, expect, test,
+ } from 'vitest'
+-import { Context } from 'hono'
+-import { getRequestIP } from './request'
++import { Context, Hono } from 'hono'
++import { getLocaleFromQuery, getRequestIP } from './request'
+ import { typeConfig } from 'configs'
+ 
++describe('getLocaleFromQuery', () => {
++  test.each([
++    [undefined, 'zh-CN,zh;q=0.9,en;q=0.8', 'zh'],
++    [undefined, 'zh-Hans', 'zh'],
++    [undefined, 'zh-TW', 'zh'],
++    [undefined, 'en;q=0.5,fr-CA;q=0.9,zh;q=0.8', 'fr'],
++    ['en', 'zh-CN', 'en'],
++    ['ZH-cn', 'en', 'zh'],
++    ['de', 'zh-CN', 'zh'],
++    [undefined, 'de-DE,zh;q=0,en;q=0.5', 'en'],
++    [undefined, 'zh;q=bad,fr;q=0.9', 'fr'],
++    [undefined, 'zh;q=1.5,fr;q=0.9', 'fr'],
++    [undefined, 'de-DE', 'en'],
++    [undefined, undefined, 'en'],
++  ])('resolves explicit %s and browser %s to %s', async (explicit, header, expected) => {
++    const app = new Hono<typeConfig.Context>()
++    app.get('/', (c) => c.text(getLocaleFromQuery(c, explicit)))
++    const response = await app.request('/', {
++      headers: header ? { 'Accept-Language': header } : {},
++    }, { SUPPORTED_LOCALES: ['en', 'fr', 'zh'] })
++    expect(await response.text()).toBe(expected)
++  })
++})
++
+ describe(
+   'getRequestIP',
+   () => {
+diff --git a/server/src/utils/request.ts b/server/src/utils/request.ts
+index 0a8f9dd36c258f252d1901b05adb1441634de637..7c56a335040797860d5a81bd911084c70b0be3b9 100644
+--- a/server/src/utils/request.ts
++++ b/server/src/utils/request.ts
+@@ -15,8 +15,31 @@ export const getLocaleFromQuery = (
+   c: Context<typeConfig.Context>, requestedLocale?: string,
+ ): typeConfig.Locale => {
+   const { SUPPORTED_LOCALES: locales } = env(c)
+-  const locale = requestedLocale?.toLowerCase() ?? ''
+-  return locales.find((supportedLocale) => supportedLocale === locale) ?? locales[0]
++  const matchLocale = (value: string) => {
++    const normalized = value.trim().toLowerCase()
++    return locales.find((locale) => locale === normalized)
++      ?? locales.find((locale) => locale === normalized.split('-')[0])
++  }
++  const explicitLocale = requestedLocale && matchLocale(requestedLocale)
++  if (explicitLocale) return explicitLocale
++
++  const preferred = (c.req.header('Accept-Language') ?? '')
++    .split(',')
++    .map((entry) => {
++      const [language, ...parameters] = entry.trim().split(';')
++      const quality = parameters.find((parameter) => parameter.trim().toLowerCase().startsWith('q='))
++      const rawQuality = quality?.trim().slice(2)
++      const weight = rawQuality === undefined ? 1
++        : /^(?:0(?:\.\d{0,3})?|1(?:\.0{0,3})?)$/.test(rawQuality) ? Number(rawQuality) : 0
++      return { language, weight }
++    })
++    .filter(({ weight }) => weight > 0)
++    .sort((a, b) => b.weight - a.weight)
++  for (const { language } of preferred) {
++    const locale = matchLocale(language)
++    if (locale) return locale
++  }
++  return locales[0]
+ }
+ 
+ export const getQueryString = (c: Context<typeConfig.Context>): string => c.req.url.split('?')[1]
+diff --git a/server/vite.config.ts b/server/vite.config.ts
+index baa6cecafe2de4d6a72271e22ec29bc0cc82bd95..fbcdc041b19ea4f3f7b0285e55467dd161046891 100644
+--- a/server/vite.config.ts
++++ b/server/vite.config.ts
+@@ -35,6 +35,13 @@ export default defineConfig(async ({ mode }) => {
+       devServer({
+         adapter: cloudflareAdapter,
+         entry: 'src/index.tsx',
++        // Let Vite transform frontend assets; otherwise the Hono router returns 404 for SVG imports.
++        exclude: [
++          /.*\.(css|ts|tsx|md|mdx|svelte|vue|js|jsx|mjs)(\?.*)?$/,
++          /^\/src\/pages\/account\/beaver\.svg(\?.*)?$/,
++          /^\/@.+$/, /[?&]t=\d+$/, /^\/favicon\.ico$/,
++          /^\/static\/.+/, /^\/node_modules\/.*/, /^\/\.vite\/.*/,
++        ],
+       }),
+     ],
+   }
+diff --git a/server/wrangler.toml b/server/wrangler.toml
+index 84c075f84d8eb17b7f3d78284f2d80737174b1e5..8da9a1e4b45d75f45cbfdbd7390d79e8e7296833 100644
+--- a/server/wrangler.toml
++++ b/server/wrangler.toml
+@@ -18,7 +18,7 @@ TERMS_LINK="" # Display a link to your terms on sign-up page
+ PRIVACY_POLICY_LINK="" # Display a link to your privacy policy on sign-up page
+ 
+ # System
+-SUPPORTED_LOCALES=['en', 'fr'] # There is built-in support for zh as well
++SUPPORTED_LOCALES=['en', 'fr', 'zh']
+ ENABLE_LOCALE_SELECTOR=true # If there is only one SUPPORTED_LOCALE, the locale selector will be disabled regardless of this setting.
+ # EMAIL_PROVIDER_NAME="" # The name of your email provider. Available options are 'smtp', 'sendgrid', 'mailgun', 'brevo', 'resend', 'postmark'
+ 
