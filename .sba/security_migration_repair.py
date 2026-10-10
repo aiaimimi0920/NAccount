@@ -34,12 +34,12 @@ def preflight(settings, source):
     return {'workers': {role: repair.digest(value) for role, value in workers.items()}, 'domains': repair.digest(domains)}
 
 
-def published(settings, releases, before):
+def published(settings, releases, before, *, changed=True):
     domains = repair.domains(settings)
     repair.require(repair.digest({role: repair.bound_domain(settings, domains, role) for role in releases}) == before['domains'])
     for role, release in releases.items():
         worker = repair.worker(settings, role)
-        repair.require(repair.digest(worker) != before['workers'][role])
+        repair.require((repair.digest(worker) != before['workers'][role]) == changed)
         folder = 'server' if role == 'server' else 'admin-panel'
         expected = read_json(release / 'source' / folder / 'wrangler.json')
         config = worker['settings']
@@ -53,7 +53,9 @@ def published(settings, releases, before):
             else:
                 repair.require(binding.get('type') == 'json' and binding.get('json') == value)
         repair.require(bool(worker['version']['resources'].get('script_runtime', {}).get('assets', {}).get('base_path')))
-        repair.require(bindings.get('ASSETS', {}).get('type') == 'assets')
+        asset_binding = expected.get('assets', {}).get('binding')
+        if asset_binding:
+            repair.require(bindings.get(asset_binding, {}).get('type') == 'assets')
         if role == 'server':
             repair.require(bindings.get('DB', {}).get('type') == 'd1' and (bindings['DB'].get('id') or bindings['DB'].get('database_id')) == settings['database']['id'])
             repair.require(bindings.get('KV', {}).get('namespace_id') == settings['kvId'])

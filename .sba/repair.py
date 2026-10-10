@@ -28,10 +28,16 @@ def validate_context(request):
         'repairId', 'parentTaskId', 'parentRunId', 'requestDigest', 'resultDigest', 'errorCode'})
     require((context['repairId'], context['errorCode']) in {
         ('admin-publish', 'NACCOUNT_ADMIN_PUBLISH_FAILED'),
-        ('security-migration', 'NACCOUNT_SERVER_PUBLISH_COMMAND_CF_7500')})
+        ('security-migration', 'NACCOUNT_SERVER_PUBLISH_COMMAND_CF_7500'),
+        ('readiness-only', 'NACCOUNT_READINESS_FAILED')})
     if context['repairId'] == 'security-migration':
         require(request.get('previous') == {
             'applicationVersion': '3.2.0', 'sourceSha': 'a8621252ab167e70f4abae6896cc7458faf17235'})
+    if context['repairId'] == 'readiness-only':
+        require(request.get('previous') == {
+            'applicationVersion': '3.2.1', 'sourceSha': 'ee09fb42efddcf1f96d1a84206ceeec578546c07'})
+        require(context['parentTaskId'] == 'dc-9595995db7764b0e88462de04d63b56d'
+                and context['parentRunId'] == 38021757950)
     require(isinstance(context['parentTaskId'], str) and re.fullmatch(r'dc-[a-f0-9]{32}', context['parentTaskId'])
             and context['parentTaskId'] != request['taskId'])
     require(type(context['parentRunId']) is int and 0 < context['parentRunId'] <= 9007199254740991)
@@ -154,6 +160,9 @@ def published(settings, before, release):
 
 def execute(request, settings, root, on_stage, configure_admin, readiness):
     require(os.environ.get('SBA_EXECUTE') == '1' and bool(os.environ.get('CLOUDFLARE_API_TOKEN')))
+    if request['context']['repairId'] == 'readiness-only':
+        from readiness_repair import execute as verify
+        return verify(request, settings, root, on_stage, configure_admin, readiness)
     if request['context']['repairId'] == 'security-migration':
         from security_migration_repair import execute as resume
         return resume(request, settings, root, on_stage, configure_admin, readiness)

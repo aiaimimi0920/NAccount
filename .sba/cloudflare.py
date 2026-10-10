@@ -27,7 +27,7 @@ EXCLUDED = {"node_modules", ".git", ".next", ".wrangler", "__pycache__"}
 
 def deployment_tools_hash():
     folder = Path(__file__).parent
-    return sha(b'\0'.join((folder / name).read_bytes() for name in ('cloudflare.py', 'lifecycle.py', 'springbok.py', 'repair.py', 'security_migration_repair.py', 'portal.py', 'diagnostics.py', 'admin_bootstrap.py', 'admin_bootstrap.mjs')))
+    return sha(b'\0'.join((folder / name).read_bytes() for name in ('cloudflare.py', 'lifecycle.py', 'springbok.py', 'repair.py', 'security_migration_repair.py', 'readiness_repair.py', 'portal.py', 'diagnostics.py', 'admin_bootstrap.py', 'admin_bootstrap.mjs')))
 
 
 def config(path: Path, component: str) -> dict:

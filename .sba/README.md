@@ -1,5 +1,17 @@
 # Cloudflare 部署与更新
 
+## 3.2.2：只读核验已发布版本
+
+认证端的静态资源托管没有命名 binding；后台显式声明 ASSETS。发布校验现依据实际
+Wrangler assets.binding 声明检查，同时保留 provider assets 托管存在性要求。
+3.2.2 不改变 3.2.1 业务补丁。`readiness-only` 仅接续固定 3.2.1 SHA
+`ee09fb42efddcf1f96d1a84206ceeec578546c07` 的任务
+`dc-9595995db7764b0e88462de04d63b56d` / run `38021757950`，并锁定已观察的双 Worker version。
+它只读核对完整迁移、安全 schema、资源/配置/域名、OIDC/JWKS，以及本次前后数据、密钥与部署
+摘要一致；不构建、不发布、不迁移、不改密码或回调。任何漂移拒绝；原 unknown 记录保留。
+成功后的 data-preserved 仅表示本次只读区间的保全，不追认旧任务的历史保全；service-ready
+也不代替 Access 后台登录、普通用户及 provider 的人工业务验收。
+
 ## 3.2.1：D1 远程迁移解析与受限续发
 
 3.2.0 的 0050 触发器在 D1 远程 API 上因内层 `CASE ... END;` 被错误分句而返回

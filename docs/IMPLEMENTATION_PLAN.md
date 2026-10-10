@@ -1,5 +1,18 @@
 # 初始工程落地范围
 
+## NA-10-READINESS：3.2.2 只读收尾（进行中）
+
+负责人：主 AI。边界为修复发布后 assets 校验误报，通过 SpringBok 正式 repair
+只读核验已发布实例；不重做迁移、构建、Worker 发布、初始化或密码修改。
+3.2.1 已由 PR #12 合并并发布，main `ee09fb42efddcf1f96d1a84206ceeec578546c07` 检查通过。
+修复任务 `dc-9595995db7764b0e88462de04d63b56d` / run `38021757950` 返回
+`unknown / NACCOUNT_READINESS_FAILED`。只读实证 0050 及安全触发器已存在，双端均发布新版本，
+OIDC/JWKS 通过；认证端仅声明 assets.directory，不声明 ASSETS binding，旧校验误套后台要求。
+修正后真实 published 配置核验通过。新增 readiness-only 固定该父任务、源码 generation
+及双 Worker version；保全检查仅覆盖新的只读区间，不追认旧回执或历史数据保全。
+3.2.2 与 3.2.1 业务补丁完全相同，仅部署校验变化；正式云端收尾及用户登录验收待完成。
+本地完整主仓库 110 项测试、补丁 verify 与 diff 检查通过；独立只读审阅未发现新阻断。
+
 ## NA-10-REPAIR：3.2.1 远程迁移修复（进行中）
 
 3.2.0 已由 PR #11 合并并发布，main `a8621252ab167e70f4abae6896cc7458faf17235` 检查通过。
@@ -11,7 +24,7 @@ SpringBok update `dc-2e367ed28ec944c1943b58fa695ff40e` / run `38019349330` 失�
 新增应用自有的 security-migration repair，使用 SpringBok 原生父子任务/permit/回执机制，
 只接受固定失败版本与只缺0050的现场。真实只读 preflight 通过；90 项 SBA 测试通过。
 只读审阅发现 portal callback 额外值可能被 publish 改写，已改为精确预检和发布只读模式，补拒绝测试。
-尚未执行此修复；原失败记录不修改、不清锁、不 rerun。
+该修复已执行，但收尾校验失败，最新现场及接续方案见上；原失败记录不修改、不清锁、不 rerun。
 
 ## NA-10-RELEASE：3.2.0 发布（进行中）
 
