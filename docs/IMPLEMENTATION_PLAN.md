@@ -1,5 +1,18 @@
 # 初始工程落地范围
 
+## NA-10-REPAIR：3.2.1 远程迁移修复（进行中）
+
+3.2.0 已由 PR #11 合并并发布，main `a8621252ab167e70f4abae6896cc7458faf17235` 检查通过。
+SpringBok update `dc-2e367ed28ec944c1943b58fa695ff40e` / run `38019349330` 失败为
+`NACCOUNT_SERVER_PUBLISH_COMMAND_CF_7500`，GitHub 执行器绿色不代表应用升级成功。
+云端只读核对：0049 已执行、0050 未生效，两个 Worker 均保持 3.1.0 发布版本。
+远程 EXPLAIN 复现旧 trigger 的内层 `END;` 分句失败；等价 RAISE/WHERE 修正编译通过，零行写入。
+源码提交 `e070108ab9ab93e6bd45dca4059c47a2f192fb7b`；59 项安全/资料/弹窗回归通过。
+新增应用自有的 security-migration repair，使用 SpringBok 原生父子任务/permit/回执机制，
+只接受固定失败版本与只缺0050的现场。真实只读 preflight 通过；90 项 SBA 测试通过。
+只读审阅发现 portal callback 额外值可能被 publish 改写，已改为精确预检和发布只读模式，补拒绝测试。
+尚未执行此修复；原失败记录不修改、不清锁、不 rerun。
+
 ## NA-10-RELEASE：3.2.0 发布（进行中）
 
 负责人：主 AI。用户已授权提交推送 GitHub，并通过 SpringBok 更新现有实例。

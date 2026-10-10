@@ -27,7 +27,7 @@ EXCLUDED = {"node_modules", ".git", ".next", ".wrangler", "__pycache__"}
 
 def deployment_tools_hash():
     folder = Path(__file__).parent
-    return sha(b'\0'.join((folder / name).read_bytes() for name in ('cloudflare.py', 'lifecycle.py', 'springbok.py', 'repair.py', 'portal.py', 'diagnostics.py', 'admin_bootstrap.py', 'admin_bootstrap.mjs')))
+    return sha(b'\0'.join((folder / name).read_bytes() for name in ('cloudflare.py', 'lifecycle.py', 'springbok.py', 'repair.py', 'security_migration_repair.py', 'portal.py', 'diagnostics.py', 'admin_bootstrap.py', 'admin_bootstrap.mjs')))
 
 
 def config(path: Path, component: str) -> dict:
@@ -302,7 +302,7 @@ jwtPublicSecret:k.publicKey,jwtPrivateSecret:k.privateKey}));"""
     return {"state": "initialized", "release": str(release)}
 
 
-def publish(release: Path, *, migrate: bool) -> dict:
+def publish(release: Path, *, migrate: bool, portal_read_only: bool = False) -> dict:
     settings, receipt = checked_release(release)
     roles = components(receipt["component"])
     secrets = {}
@@ -332,7 +332,7 @@ def publish(release: Path, *, migrate: bool) -> dict:
                     if not isinstance(response, list) or len(response) != 1 or response[0].get('success') is not True:
                         raise StackError('Portal D1 query failed')
                     return response[0]['results']
-                configure(settings, query, preview=bool(settings.get('_sbaPreview')))
+                configure(settings, query, preview=bool(settings.get('_sbaPreview')), read_only=portal_read_only)
             # Upload application secrets only when explicitly listed. JWT/session keys are not touched.
             if secrets[role]:
                 wrangler(source, role, ["secret", "bulk"], settings, secret_input=encode_json(secrets[role]), cloud=True)

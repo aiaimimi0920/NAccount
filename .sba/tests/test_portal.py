@@ -59,3 +59,13 @@ class PortalTests(unittest.TestCase):
             return self.query(settings, sql, params)
         with self.assertRaisesRegex(StackError, 'uncertain'): portal.configure(self.settings, no_write)
         self.assertEqual(len(self.writes), 1)
+
+    def test_read_only_repair_never_rewrites_missing_or_additional_callbacks(self):
+        for value in ['', 'https://auth.example.test/account,https://other.example.test/callback']:
+            self.db.execute('UPDATE app SET redirectUris=? WHERE clientId=?', [value, portal.CLIENT_ID])
+            with self.assertRaisesRegex(StackError, 'exact portal callback'):
+                portal.configure(self.settings, self.query, read_only=True)
+            self.assertEqual(self.writes, [])
+        self.db.execute('UPDATE app SET redirectUris=? WHERE clientId=?', ['https://auth.example.test/account', portal.CLIENT_ID])
+        portal.configure(self.settings, self.query, read_only=True)
+        self.assertEqual(self.writes, [])

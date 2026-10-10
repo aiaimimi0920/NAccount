@@ -26,7 +26,12 @@ def validate_context(request):
     context = request.get('context')
     require(isinstance(context, dict) and set(context) == {
         'repairId', 'parentTaskId', 'parentRunId', 'requestDigest', 'resultDigest', 'errorCode'})
-    require(context['repairId'] == 'admin-publish' and context['errorCode'] == 'NACCOUNT_ADMIN_PUBLISH_FAILED')
+    require((context['repairId'], context['errorCode']) in {
+        ('admin-publish', 'NACCOUNT_ADMIN_PUBLISH_FAILED'),
+        ('security-migration', 'NACCOUNT_SERVER_PUBLISH_COMMAND_CF_7500')})
+    if context['repairId'] == 'security-migration':
+        require(request.get('previous') == {
+            'applicationVersion': '3.2.0', 'sourceSha': 'a8621252ab167e70f4abae6896cc7458faf17235'})
     require(isinstance(context['parentTaskId'], str) and re.fullmatch(r'dc-[a-f0-9]{32}', context['parentTaskId'])
             and context['parentTaskId'] != request['taskId'])
     require(type(context['parentRunId']) is int and 0 < context['parentRunId'] <= 9007199254740991)
@@ -149,6 +154,9 @@ def published(settings, before, release):
 
 def execute(request, settings, root, on_stage, configure_admin, readiness):
     require(os.environ.get('SBA_EXECUTE') == '1' and bool(os.environ.get('CLOUDFLARE_API_TOKEN')))
+    if request['context']['repairId'] == 'security-migration':
+        from security_migration_repair import execute as resume
+        return resume(request, settings, root, on_stage, configure_admin, readiness)
     on_stage('admin-config', False)
     before = preflight(settings)
     settings, secret = configure_admin(settings, read_only=True)
