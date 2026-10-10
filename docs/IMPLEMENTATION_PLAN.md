@@ -1,5 +1,31 @@
 # 初始工程落地范围
 
+## NA-12：用户中心内认证弹窗（本地完成，待界面确认）
+
+负责人：主 AI。复用现有认证视图、PKCE、验证码和 MFA 状态机，将用户中心登录/注册
+内嵌到 Neuro 原生弹窗；保留独立授权页与第三方外部授权。不新增密码接口，不改数据库、
+账号和云配置。验收包括登录/注册/忘记密码切换、关闭与迟到响应隔离、语言、窄屏及键盘行为。
+本轮完成本地实现和验证，未推送或执行线上升级，不以本地界面通过代替真实账号安全操作验收。
+
+- `AuthDialog` 直接挂载现有 `Main` 视图；`AuthRuntime` 为每个弹窗隔离认证 URL、初始配置和
+  存活状态。不是 iframe，不写入浏览器的地址/历史，不另建密码认证接口。
+- 原 authorize-view 在完整验证请求后支持 `Accept: application/json` 返回公开功能配置和协商语言，
+  `Cache-Control: no-store`；HTML 与 JSON 共用同一份配置。独立授权页继续使用原布局。
+- 注册、忘记密码、MFA/验证码及错误复用原状态机。最终 callback 仍验证精确 origin/path、
+  单次 state、S256 PKCE、client 和时限，换取 token 并取得 profile 后才关闭弹窗。
+  关闭后的迟到响应不能导航或写入 refresh token；未完成流程在关闭时清理门户事务/会话。
+- 66 文件 661 项测试全部通过（`modal-final-tests.json`），TypeScript 与客户端/Worker 构建通过；
+  测试覆盖 JSON 请求验证、弹窗内流程切换、MFA 中间态、回调完成、取消与迟到响应。
+  初次测试暴露旧 React hook mocks 未提供 context、合成 submit 事件缺少 Hono 所需 detail；
+  已修正测试适配，最终退出码为 0，没有忽略未处理异常。
+- 真实本地浏览器验证中文切换、直接注册、返回登录/重置密码、Escape/焦点恢复、390×844 窄屏。
+  页面始终 `/account`，无 iframe；弹窗底色 `rgb(14,18,24)`，唯一主操作 `rgb(217,255,56)`。
+  截图 `linshi/naccount-user-center-20261009/modal-login.png`、`modal-mobile.png`。
+- 业务本地提交 `4639ae1bb9b2b91cdd0b1319c44aa19bf79a22c4`，补丁 export/verify 通过；
+  generation `7f350959679ca0cc8b1770cbf0bab32cce4b4b08f656cae8baea9ed0aae0802a`。
+  未发送真实邮件/短信、未进行外部 OAuth 授权、未更改线上账号或云资源。下一步为用户确认
+  `http://localhost:4888/account` 的真实弹窗效果，再按正式发布流程提交远程和从 SpringBok 升级。
+
 ## NA-11：认证页面背景一致性（已上线，2026-10-10 UTC）
 
 负责人：主 AI。仅将登录/注册共用的默认页面外层背景改为与用户中心一致的 `#06080d`，
