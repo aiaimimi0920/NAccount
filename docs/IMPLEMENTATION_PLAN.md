@@ -36,7 +36,8 @@
   弹窗内部没有 iframe。保留原 D1/KV、账号、域名和 provider 配置，不重置密码。
   证据 `upgrade-3.2.4-business-receipt.json`、`live-modal-login-3.2.4.png`、
   `springbok-3.2.4-verified.png` 位于上述 linshi 目录。
-  新弹窗完整线上登录/MFA 等待用户自行验证；真实邮件/短信和外部 OAuth 未在本轮验收。
+  用户已通过新版弹窗登录，并确认“已登录，正常进入”。未单独断言此次登录实际触发了 MFA；
+  真实邮件/短信和外部 OAuth 未在本轮验收。
 
 ## NA-11：认证页面背景一致性（已上线，2026-10-10 UTC）
 
