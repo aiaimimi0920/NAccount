@@ -1,11 +1,11 @@
 # 初始工程落地范围
 
-## NA-12：用户中心内认证弹窗（本地完成，待界面确认）
+## NA-12：用户中心内认证弹窗（3.2.4 已上线，2026-10-10 UTC）
 
 负责人：主 AI。复用现有认证视图、PKCE、验证码和 MFA 状态机，将用户中心登录/注册
 内嵌到 Neuro 原生弹窗；保留独立授权页与第三方外部授权。不新增密码接口，不改数据库、
 账号和云配置。验收包括登录/注册/忘记密码切换、关闭与迟到响应隔离、语言、窄屏及键盘行为。
-本轮完成本地实现和验证，未推送或执行线上升级，不以本地界面通过代替真实账号安全操作验收。
+用户已确认本地效果并授权发布。实现、发布与业务验收分别记录如下。
 
 - `AuthDialog` 直接挂载现有 `Main` 视图；`AuthRuntime` 为每个弹窗隔离认证 URL、初始配置和
   存活状态。不是 iframe，不写入浏览器的地址/历史，不另建密码认证接口。
@@ -23,8 +23,20 @@
   截图 `linshi/naccount-user-center-20261009/modal-login.png`、`modal-mobile.png`。
 - 业务本地提交 `4639ae1bb9b2b91cdd0b1319c44aa19bf79a22c4`，补丁 export/verify 通过；
   generation `7f350959679ca0cc8b1770cbf0bab32cce4b4b08f656cae8baea9ed0aae0802a`。
-  未发送真实邮件/短信、未进行外部 OAuth 授权、未更改线上账号或云资源。下一步为用户确认
-  `http://localhost:4888/account` 的真实弹窗效果，再按正式发布流程提交远程和从 SpringBok 升级。
+  本地阶段未发送真实邮件/短信、未进行外部 OAuth 授权或更改线上账号。
+- PR #17 精确 head `43a176a53f4b6df7b2ede3e56f84718557a30f33` 两项检查通过后正常合并，
+  main `14a0141b53a537a32b8b3d4e677897c86f893e57` CI 通过；v3.2.4 固定此 SHA，远程标签已核对。
+  本地完整主仓库 110 项测试与补丁 verify 通过。
+- SpringBok 正式控制台完成同实例 update `dc-1f6e7d34c17a467fa1c79d1711ea2572`，
+  run `38029127700`。下载 artifact 并验证 ZIP SHA256；原始业务回执为 `deployed-unverified`，
+  backup-created、data-preserved、oidc-discovery、jwks-ready、admin-http-ready 全部通过。
+- 随后正式 verify `dc-29b8222f5bad49ecb48509180abb708c` / run `38029482660` 返回
+  `succeeded`，三项可用性检查通过，控制台显示“可用性已验证”。不改写原 update 回执。
+- 真实线上 `/account` 已核对登录、注册、重置密码在原生弹窗内切换、中文与深色配色；
+  弹窗内部没有 iframe。保留原 D1/KV、账号、域名和 provider 配置，不重置密码。
+  证据 `upgrade-3.2.4-business-receipt.json`、`live-modal-login-3.2.4.png`、
+  `springbok-3.2.4-verified.png` 位于上述 linshi 目录。
+  新弹窗完整线上登录/MFA 等待用户自行验证；真实邮件/短信和外部 OAuth 未在本轮验收。
 
 ## NA-11：认证页面背景一致性（已上线，2026-10-10 UTC）
 
