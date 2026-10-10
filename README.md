@@ -4,7 +4,7 @@
 
 仓库包含认证服务、管理员后台及 NAccount 定制补丁与 SBA 部署编排。各功能的源码、验证和发布状态分别记录，不以构建或管理员登录成功代表全部账号业务已经交付。
 
-普通用户入口、个人中心、Google/GitHub 自助绑定与同账号登录已完成本地实现，见 [开发与验收边界](docs/USER_CENTER.md)。3.1.0 的门户入口为认证服务的 `/account`，部署编排自动配置独立普通用户 SPA client。当前尚未发布；真实第三方授权还需 OAuth 应用配置与上线验收，不能直接作为已上线入口使用。
+普通用户入口为认证服务的 `/account`，部署编排自动配置独立普通用户 SPA client。3.2.0 包含已确认的 Neuro 用户中心、资料与安全操作，以及按浏览器语言选择的中文认证页。Google/GitHub、邮件和短信功能需要实际 provider 配置，不能把代码完成等同真实投递或授权验收。发布状态与验证边界见 [开发计划](docs/IMPLEMENTATION_PLAN.md)、[用户中心](docs/USER_CENTER.md) 和 [认证语言](docs/AUTHENTICATION_LOCALE.md)。
 
 ## 仓库结构
 

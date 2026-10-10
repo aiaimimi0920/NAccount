@@ -1,5 +1,7 @@
 # user-portal
 
+NA-10 后续补丁接入确认后的 Neuro 用户中心和 Beaver 标识、独立昵称/签名与应用列表、邮箱/联系人手机验证码绑定、密码修改、TOTP、自助注销及用户安全版本撤销。0049/0050 为对应 D1 迁移；新增认证语言协商，显式 locale 优先于浏览器 Accept-Language。发布为 SBA 3.2.0，不包含 provider 凭据配置。安全与验证边界见 `docs/USER_CENTER.md`、`docs/AUTHENTICATION_LOCALE.md`。
+
 NA-09 普通用户入口与个人中心。范围与验收见 `docs/USER_CENTER.md`。
 
 首个补丁新增认证服务 `/account` 与公开配置白名单，不开放管理员后台、不请求 S2S 权限。

@@ -1,5 +1,110 @@
 # NA-09：普通用户入口、个人中心与社交身份绑定
 
+## NA-10-S02/S03：完整自助安全流程（本地实现，未发布）
+
+此节为最新实现；下方 S01 和 NA-09 保留历史阶段证据，不覆盖当前状态。
+
+### 页面与接口
+
+- 已将密码/邮箱的 OAuth policy 跳转，以及手机/注销的未开放占位，替换为正式二级弹窗。
+  `SecurityDialog.tsx` 通过 `GET /account/api/security` 读取真实能力，使用
+  `POST /account/api/security/start` 和 `/complete` 完成限时、一次性身份验证和修改。
+- 邮箱/独立联系人手机：输入新目标，核验当前身份，发送验证码；只有验证码验证和事务
+  成功后才换绑。不使用演示码、不在发送时预先修改。邮箱规范化，手机要求 E.164。
+  联系人号码保存到 `naccount_profile.phone`，不复用或改动 `user.smsPhoneNumber` 的 SMS MFA。
+- 密码：当前密码复核、新密码强度和双次输入确认；服务端只存新密码 hash。
+  成功后清门户会话，必须重新登录，不继续拿旧 access token 假装可用。
+- TOTP：当前身份复核、真实 QR/密钥、验证码确认。启用成功写入 secret、verified 和
+  `mfaTypes`；禁用须证明现有 TOTP，且不能绕过系统/应用强制 MFA 或唯一必需因素。
+  开启 `ENABLE_RECOVERY_CODE` 时提供现有合同的一枚 24 字符恢复码，保存确认后才启用；
+  未开启时不显示假恢复码，不宣称能通过恢复码登录。不是原型的多枚演示码。
+- 注销：红色风险确认和“删除账户”文字复核；服务端限制当前本人，禁止代登录 token，
+  保留最后一名活动超级管理员。事务清除个人资料、密码/MFA、邀请凭据、Passkey、属性、
+  组织关系和应用授权；用户保留禁用 tombstone、既有社交身份占用和必要安全日志，
+  不是物理擦除全部审计记录。页面准确说明此边界。
+
+### 安全与数据合同
+
+- SQLite `0050_naccount_security.sql` 新增用户 `securityVersion`、请求和限流表、TOTP
+  消费唯一约束。请求绑定当前用户、版本和随机 token hash，10 分钟有效，最多 5 次校验。
+  验证码存逐请求盐化摘要；发送失败不准备可提交事务，不改变用户资料。
+- D1 原子计数实施用户、目标、IP 上限与 30 秒发送冷却；不是 KV get/put 冒充原子限流。
+  新安全 API 的 TOTP 消费以 `(userId,secretHash,step)` 唯一约束防并发重放；不宣称
+  既有所有登录 TOTP 路径的 KV 防重放已一并改造成 D1。
+- SQL trigger 在同一事务中验证原始安全状态、检查目标碰撞和最后管理员、执行修改并
+  递增安全版本。旧密码、邮箱/手机验证状态、SMS 目标、OTP、MFA、恢复 hash 或配置变化
+  均拒绝继续；同请求/同旧版本并发不能双成功。提交时清掉本人的待处理证明材料。
+- 用户 access JWT、refresh、SSO、已 secured 的授权码、普通/embedded MFA 入口和
+  remembered-device 都核对证明时的用户版本，不把旧快照升级成新版本。
+  社交登录不能绕过用户已启用的本地 MFA。后台活动会话列表过滤旧版本凭据。
+  S2S token 明确区分 service，不要求存在同名用户。
+- 即时撤销保证覆盖 NAccount 自己的验证/签发入口；外部应用仅离线验 JWT 时仍需其自行
+  做短时 token、服务端在线校验或会话撤销，不能据本项目声称外部离线会话即时全部失效。
+- 清理过期请求/限流/TOTP 消费记录为后续安全请求触发的惰性清理，不声称存在定时清理服务。
+
+### 配置、验证与交付边界
+
+- 本接口仅 D1；PG 保持失败关闭。邮箱需要当前选中的真实邮件 provider 配置；手机需要
+  Twilio account/auth token/sender，未配置会返回不可用，不伪造发送成功。
+  系统/portal 应用强制的 OTP、邮箱及 SMS MFA 与个人 enrollment 一并核验。
+  无本地密码时可使用当前已验证邮箱证明，仍须继续所有要求的 MFA；无可用证明则拒绝。
+  既有原生社交主账号不通过本接口转换为本地密码登录账号；它仍用第三方登录，密码动作
+  明确不可用。普通注册账号绑定 Google/GitHub 不受此限制。
+- 完整验证运行于 `linshi/naccount-user-center-20261009/source/server`；发送测试使用显式
+  provider mock，未发送真实邮件/短信。SAML 使用该隔离目录内新生成的一天有效测试证书。
+  结果见 `security-full-regression.log`、`security-typecheck.log`、`security-build.log`。
+- 最终 `npm run test:check:cf`：148 个文件、3072 项全部通过（标准脚本排除独立 key-rotate
+  套件）；TypeScript、客户端/Worker build、两仓库 `git diff --check` 通过。
+  57 个业务变更文件与测试/浏览器副本逐字节一致且无 BOM，见 `security-verification.json`。
+  测试日志仍有 jsdom 导航未实现提示和工具弃用告警，退出码为 0；不把这些日志称为真实浏览器导航验收。
+- 本地浏览器入口仍为 `http://localhost:4888/account`，使用原合成 fixture 和本地 D1；
+  密码/TOTP/注销弹窗均为正式源码。浏览器未提交凭据变更或注销，写入和失败分支由接口测试覆盖。
+  浏览器已核对密码字段、注销危险确认、Escape 后焦点恢复；390px 视口 document scrollWidth
+  为 375px，没有横向溢出。截图 `security-password-dialog.jpg` 和 `security-delete-mobile.jpg`。
+  本地没有配置 OAuth、邮件及短信 provider，不能据此当作真实外部投递/授权验收。
+- 未创建本轮定制提交、未 export 新 generation、未推送、未升级线上；既有生成补丁不含本轮修改。
+  后续发布前按仓库规则取得本轮提交/导出及部署授权，再验证正式升级和真实 provider。
+
+## NA-10-S01：确认后的 Neuro 用户中心（2026-10-09，本地实现）
+
+本节是 S01 历史阶段记录，完整流程接续实现见上方 S02/S03；当时仅开发与本地验证，未发布。
+
+- 正式源码在 `melody-auth/server/src/pages/account/`，不是继续修改独立 HTML。
+  Beaver SVG 原样来自本地 Beaver 品牌资源；520px 名片/应用卡片、无侧栏、图标菜单、
+  原位编辑与语义控件颜色按已确认设计接入。没有复制预览用户 ID、等级、验证码或演示身份。
+- `GET/PATCH /account/api/profile` 使用门户专用 client、profile scope、活动用户检查。
+  DTO 白名单不含 password、OTP secret 或恢复码。SQLite `0049_naccount_profile.sql`
+  独立保存昵称（40 字符上限）与签名（120），不覆盖 firstName/lastName。PATCH 只允许
+  一个字段，拒绝身份字段、控制字符、越界和大包，尊重 blocked update_info；成功回执后才更新 UI。
+  目前沿用 D1-only actor；PG 不支持本接口，不宣称 PG 已验证。
+- `GET /account/api/apps` 返回当前用户自己的有效 SPA consent，加显式
+  `NACCOUNT_PUBLIC_APP_IDS` 字符串数组中登记的活动 SPA。未配置数组时不枚举其他应用。
+  自己已授权的内部 SPA 可见，不代表向其他用户公开；S2S、已删除/停用应用、门户自身不返回。
+  输出仅 clientId/name/authorized，不返回 client secret 或 redirect URI；不把 consent 当登录历史，
+  不提供未实现的撤销会话或应用跳转功能。
+- Google/GitHub 保持真实后端绑定合同，当前密码移到二级弹窗，解绑用应用内红色确认，
+  不再调用 `window.confirm`。缺 provider 配置或身份条件不足时禁用；取消不发写请求，失败清空密码。
+- 密码、邮箱换绑、MFA/恢复码/Passkey 仍复用受保护 OAuth policy，不降低验证要求。
+  页面使用“管理两步验证”，不把 reset_mfa 冒充启用/禁用。手机号与注销入口只显示未开放状态，
+  不发后台写请求。原型中的完整验证码弹窗、TOTP 三步启停、自助注销尚未实现。
+
+### 本地验证与边界
+
+运行目录 `linshi/naccount-user-center-20261009/source/server`：TypeScript、10 文件 161 项
+Vitest（门户、资料 API、社交后端、既有 Main/SignIn）与客户端/Worker 构建通过。
+`na10-tests.log`、`na10-build.log` 为本轮 UTF-8 证据。依赖复用锁文件匹配的缓存，未新安装。
+新增资料/目录 22 项测试覆盖真实 SQLite 迁移、独立用户数据、长度/身份字段/控制字符拒绝、
+client/scope/停用用户/blocked policy/PG 拒绝、目录隐私和响应白名单。
+
+浏览器副本 `linshi/naccount-user-center-20261009/browser` 仅本地新增 0049 表，保留原 fixture。
+`http://localhost:4888/account` 使用真实 Worker 开发入口和合成测试账号，通过 PKCE 登录、
+昵称签名保存、刷新持久化、应用分类、弹窗关闭和焦点恢复、退出后重新登录，390px 窄屏无横向溢出。
+浏览器样式引擎已检查选中/未选中 tab 的 hover 配色；没有使用线上账号或 provider。
+开发服务器已修复 Hono 拦截 Vite SVG import 导致 404 的问题。
+
+新业务代码仍是 `naccount/main` 工作区修改；未创建定制提交或导出新 generation，
+不能用旧补丁部署此页面。真实邮件/短信、provider 授权、生产升级及完整安全流程仍需后续验收。
+
 负责人：主 AI。状态：普通用户门户、Google/GitHub 自助绑定与部署集成本地实现完成，未发布、未进行云端写入。
 
 ## 验收边界
