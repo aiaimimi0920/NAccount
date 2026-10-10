@@ -1,5 +1,11 @@
 # Cloudflare 部署与更新
 
+## 3.2.0 用户中心与中文认证
+
+普通用户中心使用已确认的 Neuro 名片与应用卡片界面，补齐资料编辑、邮箱/联系人手机验证码绑定、密码修改、TOTP 与自助注销；认证页按浏览器语言协商，显式选择优先。真实邮件、短信及社交平台依赖对应 provider 配置，未配置时不提供假成功。
+
+升级复用现有 D1、KV、Workers 和域名。新增迁移 0049 保存昵称与签名，0050 增加联系人手机、安全请求/限流/TOTP 消费表及用户安全版本；迁移本身不删除账号、不改密码。沿既有 update 流程先导出并取得 D1 Time Travel 恢复点，核验原行保全后发布，不自动回滚或重试。旧 S2S access token 需重新签发；用户会话若失效需重新登录，不重置凭据。完整实现和验收边界见 [USER_CENTER.md](../docs/USER_CENTER.md) 与 [AUTHENTICATION_LOCALE.md](../docs/AUTHENTICATION_LOCALE.md)。
+
 ## 3.1.0 普通用户门户与社交绑定
 
 认证服务 `/account` 为普通用户入口，不依赖管理员域名。迁移 0048 创建独立公开 SPA client `naccount-user-portal`；发布认证服务前自动校验三项普通用户 scope 并配置精确 `server.url/account`。配置覆盖该 client ID 会被拒绝，正常部署不会恢复已停用 client。迁移 0047 增加社交身份唯一归属；历史 Google/GitHub 重复主体会使迁移失败，必须提前备份并检查，不能自动合并。
