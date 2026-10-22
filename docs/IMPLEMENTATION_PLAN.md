@@ -1,5 +1,32 @@
 # 初始工程落地范围
 
+## NA-13：认证与个人中心请求延迟（进行中，2026-10-22）
+
+负责人：主 AI。用户授权定位验证码发送、登录和页面切换缓慢，修复后通过 SpringBok
+更新现有实例。本子任务只处理已证实的无用 session 工作、请求内重复身份查询及应用列表
+逐项串行查询，并增加不含用户、密钥、验证码或 provider 正文的耗时证据。不跨请求缓存
+账号、权限或安全版本，不降低 MFA/撤销/限流，不重建资源或初始化账号。
+测试、测量与发布回执保存在 `linshi/naccount-na13-performance-20261022/`。
+当前线上只读核对仍为 2026-10-10 的认证/后台 Worker；正式更新尚未完成，邮件 provider
+接受与最终送达必须分开验证。原更新的 unknown 历史不改写、不重放。
+
+- 移除 token/proof-only 路径的无用 session KV 和 cookie 工作；最终认证、SSO authorize、
+  logout 及未审阅的新身份路径保留 session。真实加密 cookie 跨无状态 view 的往返已回归。
+- profile 从原先 2 KV + 4 D1 串行链减少为 1 KV + 3 D1；本请求验证用户复用，下一请求
+  仍读数据库。停用、删除和 securityVersion 变化立即拒绝，不引入跨请求权限缓存。
+- 100 项公开应用目录合并为一条参数化 JSON join，整个 apps 请求只有用户、portal client、
+  catalog 三条 D1 语句；保留 consent 用户隔离、类型/停用过滤、去重和公开目录次序。
+- 首轮改动前路径预算 17 项中 12 项失败；修复后完整 CF 测试 3,132/3,132 通过，
+  `full-cf-release.json` success=true/exit=0。TypeScript 与客户端/Worker 构建通过。
+  首轮完整套件缺 SAML 测试证书，补临时一天自签证书后重跑；新增 cookie 测试起初错误地
+  只取首个 Set-Cookie，现按浏览器语义取最后一次持久化 cookie 并通过，不改产品 cookie 行为。
+- 业务提交 `0ea7490805cb7916dfe20dcc1e0dbd97dc74e410`；导出九项补丁，拟发布 3.2.5。
+  Server-Timing 只有 app/session-key/email-provider 与数字，不含用户、code、secret、provider 正文。
+  主仓库完整 110 项测试、补丁 verify 和 diff check 通过；尚未执行生产更新。
+- 本地回归不等于真实验证码送达或线上登录性能验收；真实邮箱、短信、外部 OAuth 本轮尚未验。
+  用户已批准最多 24 小时、绑定本实例与固定 SHA 的机器更新/结果查询/独立 verify；
+  SpringBok 旧机制不支持现代 connected 更新，授权的最小兼容修复另以 SV-11 验证。
+
 ## NA-12：用户中心内认证弹窗（3.2.4 已上线，2026-10-10 UTC）
 
 负责人：主 AI。复用现有认证视图、PKCE、验证码和 MFA 状态机，将用户中心登录/注册
