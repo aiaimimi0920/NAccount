@@ -1,0 +1,2114 @@
+From 4639ae1bb9b2b91cdd0b1319c44aa19bf79a22c4 Mon Sep 17 00:00:00 2001
+From: aiaimimi0920 <153103332+aiaimimi0920@users.noreply.github.com>
+Date: Sat, 10 Oct 2026 02:40:35 -0300
+Subject: [PATCH] NA-12 embed authentication in the user center dialog
+
+NAccount-Patch-Topic: user-portal
+---
+ .../identity-main/authorize-view.test.ts      |  23 +++-
+ server/src/handlers/identity/view.tsx         |  47 +++----
+ server/src/pages/Main.tsx                     |  10 +-
+ server/src/pages/account/Account.test.tsx     |   4 +-
+ server/src/pages/account/Account.tsx          |   8 +-
+ server/src/pages/account/AuthDialog.test.tsx  | 117 ++++++++++++++++++
+ server/src/pages/account/AuthDialog.tsx       |  67 ++++++++++
+ server/src/pages/account/Dialog.tsx           |   6 +-
+ server/src/pages/account/auth.test.ts         |   7 ++
+ server/src/pages/account/auth.ts              |  22 ++--
+ server/src/pages/account/portal.css           |  19 +++
+ .../hooks/useAcceptInvitationForm.test.tsx    |   2 +
+ .../pages/hooks/useAcceptInvitationForm.tsx   |   4 +-
+ server/src/pages/hooks/useAppBanners.test.tsx |   2 +
+ .../pages/hooks/useChangeEmailForm.test.tsx   |   2 +
+ server/src/pages/hooks/useChangeEmailForm.tsx |   4 +-
+ .../src/pages/hooks/useChangeOrgForm.test.tsx |   2 +
+ server/src/pages/hooks/useChangeOrgForm.tsx   |   4 +-
+ .../hooks/useChangePasswordForm.test.tsx      |   2 +
+ .../src/pages/hooks/useChangePasswordForm.tsx |   4 +-
+ .../src/pages/hooks/useConsentForm.test.tsx   |   2 +
+ server/src/pages/hooks/useConsentForm.tsx     |  13 +-
+ .../src/pages/hooks/useCurrentView.test.tsx   |   2 +
+ server/src/pages/hooks/useCurrentView.ts      |  16 ++-
+ .../src/pages/hooks/useEmailMfaForm.test.tsx  |   2 +
+ server/src/pages/hooks/useEmailMfaForm.tsx    |   5 +-
+ server/src/pages/hooks/useInitialProps.ts     |   6 +-
+ server/src/pages/hooks/useLocale.test.tsx     |   2 +
+ server/src/pages/hooks/useLocale.ts           |  10 +-
+ .../pages/hooks/useMagicSignInForm.test.tsx   |   2 +
+ server/src/pages/hooks/useMagicSignInForm.tsx |   5 +-
+ .../pages/hooks/useManagePasskeyForm.test.tsx |   2 +
+ .../src/pages/hooks/useManagePasskeyForm.tsx  |   4 +-
+ .../hooks/useManageRecoveryCodeForm.test.tsx  |   2 +
+ .../pages/hooks/useManageRecoveryCodeForm.tsx |   4 +-
+ .../src/pages/hooks/useMfaEnrollForm.test.tsx |   2 +
+ server/src/pages/hooks/useMfaEnrollForm.tsx   |   5 +-
+ server/src/pages/hooks/useOtpMfaForm.test.tsx |   2 +
+ server/src/pages/hooks/useOtpMfaForm.tsx      |   5 +-
+ .../pages/hooks/usePasskeyEnrollForm.test.tsx |   2 +
+ .../src/pages/hooks/usePasskeyEnrollForm.tsx  |   6 +-
+ .../pages/hooks/usePasskeyVerifyForm.test.tsx |   2 +
+ .../src/pages/hooks/usePasskeyVerifyForm.tsx  |   3 +
+ .../hooks/usePasswordlessVerifyForm.test.tsx  |   2 +
+ .../pages/hooks/usePasswordlessVerifyForm.tsx |   5 +-
+ .../hooks/useRecoveryCodeEnrollForm.test.tsx  |   3 +
+ .../pages/hooks/useRecoveryCodeEnrollForm.tsx |   5 +-
+ .../pages/hooks/useRecoveryCodeForm.test.tsx  |   4 +
+ .../src/pages/hooks/useRecoveryCodeForm.tsx   |   4 +
+ .../src/pages/hooks/useResetMfaForm.test.tsx  |   2 +
+ server/src/pages/hooks/useResetMfaForm.tsx    |   4 +-
+ .../pages/hooks/useResetPasswordForm.test.tsx |   2 +
+ server/src/pages/hooks/useSignInForm.test.tsx |   2 +
+ server/src/pages/hooks/useSignInForm.tsx      |   4 +
+ server/src/pages/hooks/useSignUpForm.test.tsx |   2 +
+ server/src/pages/hooks/useSignUpForm.tsx      |   3 +
+ server/src/pages/hooks/useSmsMfaForm.test.tsx |   3 +
+ server/src/pages/hooks/useSmsMfaForm.tsx      |   5 +-
+ .../src/pages/hooks/useSocialSignIn.test.tsx  |   4 +
+ server/src/pages/hooks/useSocialSignIn.tsx    |   4 +
+ .../src/pages/hooks/useSubmitError.test.tsx   |   2 +
+ server/src/pages/hooks/useSubmitError.tsx     |  11 +-
+ .../src/pages/hooks/useSwitchOrgForm.test.tsx |   2 +
+ server/src/pages/hooks/useSwitchOrgForm.tsx   |   5 +-
+ .../pages/hooks/useUpdateInfoForm.test.tsx    |   2 +
+ server/src/pages/hooks/useUpdateInfoForm.tsx  |   4 +-
+ .../pages/hooks/useVerifyEmailForm.test.tsx   |   2 +
+ server/src/pages/hooks/useVerifyEmailForm.tsx |   4 +-
+ server/src/pages/tools/authRuntime.ts         |  20 +++
+ server/src/pages/tools/param.ts               |  33 ++---
+ server/src/pages/tools/request.ts             |  17 ++-
+ server/src/pages/views/AuthCodeExpired.tsx    |   4 +-
+ server/src/pages/views/RecoveryCodeSignIn.tsx |   4 +-
+ server/src/pages/views/SignIn.tsx             |   4 +-
+ server/src/pages/views/SignUp.tsx             |   4 +-
+ 75 files changed, 525 insertions(+), 111 deletions(-)
+ create mode 100644 server/src/pages/account/AuthDialog.test.tsx
+ create mode 100644 server/src/pages/account/AuthDialog.tsx
+ create mode 100644 server/src/pages/tools/authRuntime.ts
+
+diff --git a/server/src/__tests__/normal/identity-main/authorize-view.test.ts b/server/src/__tests__/normal/identity-main/authorize-view.test.ts
+index 0aa51c168f0cad66aa1cdfc184d6d75ee541240a..286c9cc18ce66a0b57d5000b117f1cf0d9632ee7 100644
+--- a/server/src/__tests__/normal/identity-main/authorize-view.test.ts
++++ b/server/src/__tests__/normal/identity-main/authorize-view.test.ts
+@@ -1,4 +1,5 @@
+ import { Database } from 'better-sqlite3'
++import app from 'index'
+ import {
+   afterEach, beforeEach, describe, expect, test,
+ } from 'vitest'
+@@ -7,10 +8,11 @@ import {
+ } from 'configs'
+ import {
+   migrate,
++  mock,
+   mockedKV,
+ } from 'tests/mock'
+ import {
+-  getApp, getSignInRequest,
++  getApp, getSignInRequest, getAuthorizeParams,
+ } from 'tests/identity'
+ 
+ let db: Database
+@@ -27,6 +29,25 @@ afterEach(async () => {
+ describe(
+   'get /authorize-view',
+   () => {
++    test('returns validated, non-cacheable public flags for the portal dialog', async () => {
++      const params = new URLSearchParams(await getAuthorizeParams(await getApp(db)))
++      params.set('locale', 'zh')
++      const res = await app.request(`${routeConfig.IdentityRoute.AuthorizeView}?${params}`, { headers: { Accept: 'application/json' } }, mock(db))
++      expect(res.status).toBe(200)
++      expect(res.headers.get('Cache-Control')).toBe('no-store')
++      const data = await res.json() as { locale: string; initialProps: Record<string, unknown> }
++      expect(data.locale).toBe('zh')
++      expect(data.initialProps.enableSignUp).toBe(process.env.ENABLE_SIGN_UP)
++      expect(data.initialProps).not.toHaveProperty('password')
++      expect(data.initialProps).not.toHaveProperty('githubClientSecret')
++    })
++    test.each(['client_id', 'redirect_uri', 'code_challenge_method'])('validates %s before returning dialog configuration', async (field) => {
++      const params = new URLSearchParams(await getAuthorizeParams(await getApp(db)))
++      params.set(field, 'invalid')
++      const res = await app.request(`${routeConfig.IdentityRoute.AuthorizeView}?${params}`, { headers: { Accept: 'application/json' } }, mock(db))
++      expect(res.status).toBeGreaterThanOrEqual(400)
++      expect(await res.text()).not.toContain('initialProps')
++    })
+     test(
+       'should show authorize view page',
+       async () => {
+diff --git a/server/src/handlers/identity/view.tsx b/server/src/handlers/identity/view.tsx
+index 7fde117ba1e54016e7049c7611011ff7323225de..5b8d6d28d8a79bf78c513a653e3ad47f6b77842d 100644
+--- a/server/src/handlers/identity/view.tsx
++++ b/server/src/handlers/identity/view.tsx
+@@ -1,7 +1,7 @@
+ import { freshUser } from 'services/accountEpoch'
+ import { Context } from 'hono'
+ import { env } from 'hono/adapter'
+-import { html } from 'hono/html'
++import { html, raw } from 'hono/html'
+ import {
+   css, Style,
+ } from 'hono/css'
+@@ -161,35 +161,22 @@ export const getAuthorizeView = async (c: Context<typeConfig.Context>) => {
+     queryDto.org,
+   )
+ 
+-  const propsScript = html`
+-    <script>
+-      window.__initialProps = {
+-        locales: "${locales.join(',')}",
+-        logoUrl: "${branding.logoUrl}",
+-        enableLocaleSelector: ${enableLocaleSelector.toString()},
+-        enablePasswordReset: ${enablePasswordReset.toString()},
+-        enableSignUp: ${enableSignUp.toString()},
+-        enablePasswordSignIn: ${enablePasswordSignIn.toString()},
+-        enablePasswordlessSignIn: ${enablePasswordlessSignIn.toString()},
+-        usePasswordlessAsMagicLink: ${(usePasswordlessAsMagicLink ?? false).toString()},
+-        enableMfaRememberDevice: ${enableMfaRememberDevice.toString()},
+-        enableAppBanner: ${enableAppBanner.toString()},
+-        googleClientId: "${googleClientId}",
+-        facebookClientId: "${facebookClientId}",
+-        githubClientId: "${githubClientId}",
+-        appleClientId: "${appleClientId}",
+-        discordClientId: "${discordClientId}",
+-        oidcProviders: "${oidcProviders.join(',')}",
+-        enableNames: ${enableNames.toString()},
+-        namesIsRequired: ${namesIsRequired.toString()},
+-        termsLink: "${branding.termsLink}",
+-        privacyPolicyLink: "${branding.privacyPolicyLink}",
+-        allowPasskey: ${allowPasskey.toString()},
+-        allowRecoveryCode: ${allowRecoveryCode.toString()},
+-        enableUserAttribute: ${enableUserAttribute.toString()},
+-      }
+-    </script>
+-  `
++  const initialProps = {
++    locales: locales.join(','), logoUrl: branding.logoUrl,
++    enableLocaleSelector, enablePasswordReset, enableSignUp, enablePasswordSignIn,
++    enablePasswordlessSignIn, usePasswordlessAsMagicLink: usePasswordlessAsMagicLink ?? false,
++    enableMfaRememberDevice, enableAppBanner, googleClientId, facebookClientId,
++    githubClientId, appleClientId, discordClientId, oidcProviders: oidcProviders.join(','),
++    enableNames, namesIsRequired, termsLink: branding.termsLink,
++    privacyPolicyLink: branding.privacyPolicyLink, allowPasskey, allowRecoveryCode, enableUserAttribute,
++  }
++  // Same validated authorize request and flags as the standalone view; no credentials.
++  if (c.req.header('Accept') === 'application/json') {
++    c.header('Cache-Control', 'no-store')
++    return c.json({ initialProps, locale: queryDto.locale })
++  }
++  const propsSource = Object.entries(initialProps).map(([key, value]) => `${key}: ${JSON.stringify(value).replace(/</g, '\\u003c')}`).join(',\n')
++  const propsScript = html`<script>window.__initialProps = {${raw(propsSource)}}</script>`
+ 
+   return viewRender(
+     c,
+diff --git a/server/src/pages/Main.tsx b/server/src/pages/Main.tsx
+index 2ea78ab142d80890b7bdc659d777caa95eb6df94..37cd6e9e60457151bab879fed0244819577378c2 100644
+--- a/server/src/pages/Main.tsx
++++ b/server/src/pages/Main.tsx
+@@ -33,13 +33,16 @@ import {
+ import { Layout } from 'pages/blocks'
+ import { getLocaleFromParams } from 'pages/tools/param'
+ import './client.css'
++import { useAuthRuntime } from './tools/authRuntime'
++import { LocaleSelector } from 'pages/components'
+ 
+ const Main = () => {
++  const runtime = useAuthRuntime()
+   const { initialProps } = useInitialProps()
+ 
+   const {
+     locale, handleSwitchLocale,
+-  } = useLocale({ initialLocale: getLocaleFromParams() })
++  } = useLocale({ initialLocale: getLocaleFromParams(runtime) })
+ 
+   const {
+     view, handleSwitchView,
+@@ -104,6 +107,11 @@ const Main = () => {
+     [view],
+   )
+ 
++  if (runtime) return <div class='embedded-auth'>
++    {initialProps.enableLocaleSelector && initialProps.locales.length > 1 && <div class='auth-locale'><LocaleSelector locale={locale} locales={initialProps.locales} onChange={handleSwitchLocale} /></div>}
++    <CurrentView locale={locale} onSwitchView={handleSwitchView} />
++  </div>
++
+   return (
+     <Layout
+       locale={locale}
+diff --git a/server/src/pages/account/Account.test.tsx b/server/src/pages/account/Account.test.tsx
+index 2fee29b2b39f7f7e282db5ba19169750af28d684..f6c7865239a40c833c7afabec63268e825561907 100644
+--- a/server/src/pages/account/Account.test.tsx
++++ b/server/src/pages/account/Account.test.tsx
+@@ -31,7 +31,9 @@ describe('ordinary-user account center', () => {
+     render(<Account />, container)
+     await waitFor(() => expect(getByRole(container, 'button', { name: '注册账号' })).toBeTruthy())
+     fireEvent.click(getByRole(container, 'button', { name: '注册账号' }))
+-    await waitFor(() => expect(auth.authorize).toHaveBeenCalledWith(config, undefined, true))
++    await waitFor(() => expect(getByRole(container, 'dialog', { name: '账号验证' })).toBeTruthy())
++    expect(auth.authorize).not.toHaveBeenCalled()
++    expect(window.location.pathname).toBe('/account')
+   })
+   it('does not offer disabled registration', async () => {
+     vi.mocked(auth.request).mockResolvedValue({ ...config, signup: false })
+diff --git a/server/src/pages/account/Account.tsx b/server/src/pages/account/Account.tsx
+index 15b20aeba1c4b4ef700fc00bc2f9a4e2b052a2f0..ea0577a44fe58b95f8112d588b346e9b164a1caa 100644
+--- a/server/src/pages/account/Account.tsx
++++ b/server/src/pages/account/Account.tsx
+@@ -5,6 +5,7 @@ import Applications from './Applications'
+ import InlineEdit from './InlineEdit'
+ import SecurityDialog, { SecurityAction } from './SecurityDialog'
+ import Icon from './Icons'
++import AuthDialog from './AuthDialog'
+ import beaver from './beaver.svg'
+ import './portal.css'
+ 
+@@ -24,6 +25,7 @@ export default function Account() {
+   const [section, setSection] = useState(window.location.hash === '#apps' ? 'apps' : 'profile')
+   const [menu, setMenu] = useState(false)
+   const [dialog, setDialog] = useState<SecurityAction | null>(null)
++  const [authDialog, setAuthDialog] = useState<'login' | 'signup' | null>(null)
+   const menuRef = useRef<HTMLDivElement>(null)
+   const menuButton = useRef<HTMLButtonElement>(null)
+   useEffect(() => {
+@@ -96,8 +98,8 @@ export default function Account() {
+       {busy && !user && <p class='load-status' role='status'>正在处理…</p>}
+       {error && <section class='error-banner' role='alert'><p>{error}</p><button class='btn' disabled={busy} onClick={() => setAttempt(attempt + 1)}>重试</button></section>}
+       {!user && config && !busy && <section class='entry-card' aria-label='账号入口'><Icon name='user' /><div class='entry-actions'>
+-        <button class='btn primary' onClick={() => run(() => auth.authorize(config))}>登录</button>
+-        {config.signup && <button class='btn' onClick={() => run(() => auth.authorize(config, undefined, true))}>注册账号</button>}
++        <button class='btn primary' onClick={() => setAuthDialog('login')}>登录</button>
++        {config.signup && <button class='btn' onClick={() => setAuthDialog('signup')}>注册账号</button>}
+       </div></section>}
+       {user && config && accessToken && (section === 'apps' ? <Applications accessToken={accessToken} /> : <section class='identity-card' aria-label='账户名片'>
+         <div class='card-cover' />
+@@ -120,6 +122,8 @@ export default function Account() {
+       </section>)}
+     </main>
+     {notice && <div class='toast' role='status'>{notice}</div>}
++    {authDialog && config && <AuthDialog config={config} signup={authDialog === 'signup'} onClose={() => setAuthDialog(null)}
++      onAuthenticated={(token, nextUser) => { setAccessToken(token); setUser(nextUser); setAuthDialog(null); setError('') }} />}
+     {dialog && accessToken && <SecurityDialog action={dialog} accessToken={accessToken} onClose={() => setDialog(null)}
+       onCompleted={(deleted) => {
+         setDialog(null); setUser(null); setAccessToken(null)
+diff --git a/server/src/pages/account/AuthDialog.test.tsx b/server/src/pages/account/AuthDialog.test.tsx
+new file mode 100644
+index 0000000000000000000000000000000000000000..888a06b162b3530c21c1e6b5d86ffda6f1ffbad8
+--- /dev/null
++++ b/server/src/pages/account/AuthDialog.test.tsx
+@@ -0,0 +1,117 @@
++import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
++import { render } from 'hono/jsx/dom'
++import { useState } from 'hono/jsx'
++import { fireEvent, getByRole, waitFor } from '@testing-library/dom'
++import AuthDialog from './AuthDialog'
++import * as auth from './auth'
++import { View } from '../hooks'
++
++vi.mock('./auth', async (original) => ({
++  ...await original<typeof import('./auth')>(),
++  beginAuthorization: vi.fn(), request: vi.fn(), restore: vi.fn(), profile: vi.fn(),
++}))
++const config: auth.PortalConfig = {
++  clientId: 'portal', serverUri: 'http://localhost:3000', redirectUri: 'http://localhost:3000/account', signup: true, policies: [],
++}
++const initialProps = { locales: 'en,zh', enableLocaleSelector: true, enablePasswordSignIn: true, enableSignUp: true, enablePasswordReset: true }
++let container: HTMLDivElement
++const authenticated = vi.fn()
++const fetchMock = vi.fn()
++
++beforeEach(() => {
++  vi.resetAllMocks()
++  sessionStorage.clear()
++  window.history.replaceState(null, '', '/account#apps')
++  HTMLDialogElement.prototype.showModal = function () { this.setAttribute('open', '') }
++  HTMLDialogElement.prototype.close = function () { this.removeAttribute('open') }
++  container = document.createElement('div'); document.body.appendChild(container)
++  vi.mocked(auth.beginAuthorization).mockImplementation(async (_config, _policy, signup) => new URL('http://localhost:3000/identity/v1/view/authorize?client_id=portal&state=state&redirect_uri=http%3A%2F%2Flocalhost%3A3000%2Faccount' + (signup ? '&screen=signup' : '')))
++  vi.mocked(auth.request).mockResolvedValue({ initialProps, locale: 'en' })
++  vi.mocked(auth.restore).mockResolvedValue('access')
++  vi.mocked(auth.profile).mockResolvedValue({ authId: 'user', email: 'user@example.test', emailVerified: true })
++  vi.stubGlobal('fetch', fetchMock)
++})
++afterEach(async () => {
++  const close = container.querySelector('button[aria-label="关闭弹窗"]')
++  if (close) { fireEvent.click(close); await waitFor(() => expect(container.querySelector('dialog')).toBeNull()) }
++  render(null, container); container.remove(); vi.unstubAllGlobals()
++})
++
++function Host({ signup }: { signup: boolean }) {
++  const [open, setOpen] = useState(true)
++  return <div>{open && <AuthDialog config={config} signup={signup} onClose={() => setOpen(false)} onAuthenticated={authenticated} />}</div>
++}
++
++function mount(signup = false) {
++  render(<Host signup={signup} />, container)
++}
++async function signIn() {
++  await waitFor(() => expect(container.querySelector('#form-email')).toBeTruthy())
++  fireEvent.input(container.querySelector('#form-email')!, { target: { value: 'user@example.test' } })
++  fireEvent.input(container.querySelector('#form-password')!, { target: { value: 'Test-only-Password!123' } })
++  await new Promise((done) => setTimeout(done, 0))
++  // Hono's form-action listener expects detail on synthetic (untrusted) submit events.
++  fireEvent(container.querySelector('form')!, new CustomEvent('submit', { bubbles: true, cancelable: true, detail: {} }))
++}
++const success = { redirectUri: config.redirectUri, state: 'state', code: 'code' }
++
++describe('embedded portal authentication', () => {
++  it('switches login and registration inside the same page', async () => {
++    mount()
++    await waitFor(() => expect(getByRole(container, 'button', { name: 'Create a new account' })).toBeTruthy())
++    fireEvent.click(getByRole(container, 'button', { name: 'Create a new account' }))
++    await waitFor(() => expect(container.querySelector('input[autocomplete="new-password"]')).toBeTruthy())
++    expect(window.location.pathname + window.location.hash).toBe('/account#apps')
++    expect(authenticated).not.toHaveBeenCalled()
++  })
++  it('switches to reset password inside the same page', async () => {
++    mount()
++    await waitFor(() => expect(getByRole(container, 'button', { name: 'Reset password' })).toBeTruthy())
++    fireEvent.click(getByRole(container, 'button', { name: 'Reset password' }))
++    await waitFor(() => expect(container.querySelector('#form-password')).toBeNull())
++    expect(authenticated).not.toHaveBeenCalled()
++  })
++  it('opens registration directly and can close with Escape without navigation', async () => {
++    mount(true)
++    await waitFor(() => expect(container.querySelector('input[autocomplete="new-password"]')).toBeTruthy())
++    fireEvent(container.querySelector('dialog')!, new Event('cancel', { cancelable: true }))
++    await waitFor(() => expect(container.querySelector('dialog')).toBeNull())
++    expect(window.location.pathname).toBe('/account')
++    await waitFor(() => expect(document.body.style.overflow).toBe(''))
++  })
++  it('exchanges the callback and loads the profile without redirecting', async () => {
++    fetchMock.mockResolvedValue(Response.json(success))
++    mount(); await signIn()
++    await waitFor(() => expect(authenticated).toHaveBeenCalledWith('access', expect.objectContaining({ authId: 'user' })))
++    expect(auth.restore).toHaveBeenCalledWith(config, expect.any(URL), expect.any(Function))
++    expect(window.location.pathname + window.location.hash).toBe('/account#apps')
++  })
++  it('keeps MFA as an intermediate step and never authenticates prematurely', async () => {
++    fetchMock.mockResolvedValueOnce(Response.json({ ...success, nextPage: View.OtpMfa }))
++      .mockResolvedValue(Response.json({ allowFallbackToEmailMfa: false }))
++    mount(); await signIn()
++    await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => String(url).includes('code=code'))).toBe(true))
++    expect(auth.restore).not.toHaveBeenCalled()
++    expect(authenticated).not.toHaveBeenCalled()
++    expect(window.location.pathname).toBe('/account')
++  })
++  it('discards a login response arriving after the dialog was closed', async () => {
++    let resolve!: (value: Response) => void
++    fetchMock.mockImplementation(() => new Promise<Response>((done) => { resolve = done }))
++    mount(); await signIn()
++    await waitFor(() => expect(fetchMock).toHaveBeenCalled())
++    fireEvent.click(getByRole(container, 'button', { name: '关闭弹窗' }))
++    await waitFor(() => expect(container.querySelector('dialog')).toBeNull())
++    resolve(Response.json(success))
++    await new Promise((done) => setTimeout(done, 20))
++    expect(auth.restore).not.toHaveBeenCalled()
++    expect(authenticated).not.toHaveBeenCalled()
++  })
++  it('rejects a response pointing outside the configured callback', async () => {
++    fetchMock.mockResolvedValue(Response.json({ ...success, redirectUri: 'https://other.example/account' }))
++    mount(); await signIn()
++    await waitFor(() => expect(getByRole(container, 'alert')).toBeTruthy())
++    expect(auth.restore).not.toHaveBeenCalled()
++    expect(authenticated).not.toHaveBeenCalled()
++  })
++})
+diff --git a/server/src/pages/account/AuthDialog.tsx b/server/src/pages/account/AuthDialog.tsx
+new file mode 100644
+index 0000000000000000000000000000000000000000..6f4c22bf1c41ff5ce3f87cb4f3d1b0e2e5b059e8
+--- /dev/null
++++ b/server/src/pages/account/AuthDialog.tsx
+@@ -0,0 +1,67 @@
++import { useEffect, useState } from 'hono/jsx'
++import Main from '../Main'
++import { AuthRuntime, AuthRuntimeContext } from '../tools/authRuntime'
++import Dialog from './Dialog'
++import * as auth from './auth'
++
++export default function AuthDialog({ config, signup, onClose, onAuthenticated }: {
++  config: auth.PortalConfig; signup: boolean; onClose: () => void;
++  onAuthenticated: (token: string, user: auth.Profile) => void;
++}) {
++  const [runtime, setRuntime] = useState<AuthRuntime | null>(null)
++  const [error, setError] = useState('')
++  const [completing, setCompleting] = useState(false)
++  useEffect(() => {
++    let active = true
++    let flow: AuthRuntime | null = null
++    let finishing = false
++    let authenticated = false
++    const complete = async (href: string) => {
++      if (!active || finishing) return
++      finishing = true
++      setCompleting(true)
++      try {
++        const callback = new URL(href)
++        const expected = new URL(config.redirectUri)
++        if (callback.origin !== expected.origin || callback.pathname !== expected.pathname) throw new auth.PortalError('INVALID_CALLBACK')
++        const token = await auth.restore(config, callback, () => active)
++        if (!token || !active) return
++        const user = await auth.profile(config, token)
++        if (active) { authenticated = true; onAuthenticated(token, user) }
++      } catch {
++        if (active) setError('登录未完成或请求已失效，请关闭后重试。')
++      } finally {
++        if (active) setCompleting(false)
++      }
++    }
++    const start = async () => {
++      try {
++        const url = await auth.beginAuthorization(config, undefined, signup, () => active)
++        // Interactive view returns the same server-validated flags as standalone authentication.
++        url.pathname = '/identity/v1/view/authorize'
++        const response = await auth.request<{ initialProps: Record<string, unknown>; locale: string }>(url.href, {
++          headers: { Accept: 'application/json' },
++        })
++        if (!active) return
++        url.searchParams.set('locale', response.locale)
++        flow = { url, initialProps: response.initialProps, active: true, complete: (href) => { void complete(href) } }
++        setRuntime(flow)
++      } catch {
++        if (active) setError('无法加载登录表单，请关闭后重试。')
++      }
++    }
++    void start()
++    return () => {
++      active = false
++      if (flow) flow.active = false
++      auth.cancelAuthorization()
++      if (!authenticated) auth.clearSession()
++    }
++  }, [])
++
++  return <Dialog title='账号验证' heading={false} onClose={onClose}>
++    {error ? <p class='error-inline' role='alert'>{error}</p> : completing ? <p role='status'>正在登录…</p> : runtime
++      ? <AuthRuntimeContext.Provider value={runtime}><Main /></AuthRuntimeContext.Provider>
++      : <p role='status'>正在加载…</p>}
++  </Dialog>
++}
+diff --git a/server/src/pages/account/Dialog.tsx b/server/src/pages/account/Dialog.tsx
+index 540c8b4a4937c99afff28e65ac63b95cee632672..b65c478f613586fbc1d7504f97f22b528d16350b 100644
+--- a/server/src/pages/account/Dialog.tsx
++++ b/server/src/pages/account/Dialog.tsx
+@@ -1,8 +1,8 @@
+ import { useEffect, useRef } from 'hono/jsx'
+ import { Child } from 'hono/jsx'
+ 
+-export default function Dialog({ title, children, onClose, busy = false, danger = false }: {
+-  title: string; children: Child; onClose: () => void; busy?: boolean; danger?: boolean;
++export default function Dialog({ title, children, onClose, busy = false, danger = false, heading = true }: {
++  title: string; children: Child; onClose: () => void; busy?: boolean; danger?: boolean; heading?: boolean;
+ }) {
+   const ref = useRef<HTMLDialogElement>(null)
+   useEffect(() => {
+@@ -20,7 +20,7 @@ export default function Dialog({ title, children, onClose, busy = false, danger
+   }, [])
+   return <dialog ref={ref} class={`portal-dialog${danger ? ' danger-dialog' : ''}`} aria-label={title}
+     onCancel={(event: Event) => { event.preventDefault(); if (!busy) onClose() }}>
+-    <div class='dialoghead'><h2>{title}</h2><button type='button' class='close' aria-label='关闭弹窗' disabled={busy} onClick={onClose}>×</button></div>
++    <div class={heading ? 'dialoghead' : 'auth-dialoghead'}>{heading && <h2>{title}</h2>}<button type='button' class='close' aria-label='关闭弹窗' disabled={busy} onClick={onClose}>×</button></div>
+     {children}
+   </dialog>
+ }
+diff --git a/server/src/pages/account/auth.test.ts b/server/src/pages/account/auth.test.ts
+index 733a11c6cfd9811dcae622ceb481fdc6bb6e1842..985306b0e4d8e78cb963fa8c5b17b018c4432254 100644
+--- a/server/src/pages/account/auth.test.ts
++++ b/server/src/pages/account/auth.test.ts
+@@ -29,6 +29,13 @@ function callback(overrides = {}, query = '?code=code&state=state') {
+ }
+ 
+ describe('portal authorization boundaries', () => {
++  it('does not persist tokens after an embedded flow is cancelled', async () => {
++    callback()
++    fetchMock.mockResolvedValue(Response.json({ access_token: 'access', refresh_token: 'refresh' }))
++    await expect(restore(config, new URL(config.redirectUri + '?code=code&state=state'), () => false)).rejects.toMatchObject({ code: 'INVALID_CALLBACK' })
++    expect(sessionStorage.getItem(refreshKey)).toBeNull()
++    expect(replaceState).not.toHaveBeenCalled()
++  })
+   it('starts registration on the interactive view with independent PKCE and state', async () => {
+     await authorize(config, undefined, true)
+     const url = new URL(assign.mock.calls[0][0])
+diff --git a/server/src/pages/account/auth.ts b/server/src/pages/account/auth.ts
+index e9b41ede0d492667abf7ea24308221877346b75d..4f4826c1ce24ac67e6bd8059e82d46de9708a7ee 100644
+--- a/server/src/pages/account/auth.ts
++++ b/server/src/pages/account/auth.ts
+@@ -67,13 +67,16 @@ function refreshFor(config: PortalConfig): string | null {
+   return null
+ }
+ 
+-export async function authorize(config: PortalConfig, policy?: string, signup = false) {
++export const cancelAuthorization = () => sessionStorage.removeItem(transactionKey)
++
++export async function beginAuthorization(config: PortalConfig, policy?: string, signup = false, active = () => true) {
+   if (policy && !config.policies.includes(policy)) throw new PortalError('REQUEST_FAILED')
+   if (signup && !config.signup) throw new PortalError('REQUEST_FAILED')
+   const verifier = random()
+   const state = random()
+   const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier)))
+   const challenge = btoa(String.fromCharCode(...digest)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
++  if (!active()) throw new PortalError('INVALID_CALLBACK')
+   sessionStorage.setItem(transactionKey, JSON.stringify({ state, verifier, created: Date.now(), clientId: config.clientId }))
+   const params = new URLSearchParams({
+     response_type: 'code', client_id: config.clientId, redirect_uri: config.redirectUri,
+@@ -84,16 +87,21 @@ export async function authorize(config: PortalConfig, policy?: string, signup =
+   if (signup) params.set('screen', 'signup')
+   // Registration deliberately starts at the validated interactive view, not an existing SSO session.
+   const path = signup ? '/identity/v1/view/authorize' : '/oauth2/v1/authorize'
+-  window.location.assign(`${config.serverUri}${path}?${params}`)
++  return new URL(`${config.serverUri}${path}?${params}`)
++}
++
++export async function authorize(config: PortalConfig, policy?: string, signup = false) {
++  window.location.assign((await beginAuthorization(config, policy, signup)).href)
+ }
+ 
+ interface Tokens { access_token: string; refresh_token?: string }
+ 
+-async function token(config: PortalConfig, data: Record<string, string>) {
++async function token(config: PortalConfig, data: Record<string, string>, active = () => true) {
+   const result = await request<Tokens>(`${config.serverUri}/oauth2/v1/token`, {
+     method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+     body: new URLSearchParams(data).toString(),
+   })
++  if (!active()) throw new PortalError('INVALID_CALLBACK')
+   if (!result.access_token || typeof result.access_token !== 'string') throw new PortalError('REQUEST_FAILED')
+   if (result.refresh_token && typeof result.refresh_token === 'string') {
+     sessionStorage.setItem(refreshKey, JSON.stringify({ clientId: config.clientId, token: result.refresh_token }))
+@@ -101,14 +109,14 @@ async function token(config: PortalConfig, data: Record<string, string>) {
+   return result.access_token
+ }
+ 
+-export async function restore(config: PortalConfig): Promise<string | null> {
+-  const params = new URLSearchParams(window.location.search)
++export async function restore(config: PortalConfig, callback?: URL, active = () => true): Promise<string | null> {
++  const params = new URLSearchParams(callback?.search ?? window.location.search)
+   if (params.has('code') || params.has('state') || params.has('error')) {
+     const stored = sessionStorage.getItem(transactionKey)
+     sessionStorage.removeItem(transactionKey)
+     sessionStorage.removeItem(refreshKey)
+     // Remove authorization material even on denial, malformed state or network failure.
+-    window.history.replaceState(null, '', window.location.pathname)
++    if (!callback) window.history.replaceState(null, '', window.location.pathname)
+     let transaction
+     try { transaction = JSON.parse(stored ?? 'null') } catch { throw new PortalError('INVALID_CALLBACK') }
+     if (!transaction || params.has('error') || params.getAll('code').length !== 1 || params.getAll('state').length !== 1 ||
+@@ -122,7 +130,7 @@ export async function restore(config: PortalConfig): Promise<string | null> {
+     return token(config, {
+       grant_type: 'authorization_code', code: params.get('code')!,
+       redirect_uri: config.redirectUri, code_verifier: transaction.verifier,
+-    })
++    }, active)
+   }
+   const refresh = refreshFor(config)
+   if (!refresh) return null
+diff --git a/server/src/pages/account/portal.css b/server/src/pages/account/portal.css
+index 5070ca34591f069614e255c36820b8f30e720b8f..b4df7789bdf7974dfd66e2d64633e13fb710b08f 100644
+--- a/server/src/pages/account/portal.css
++++ b/server/src/pages/account/portal.css
+@@ -31,3 +31,22 @@ html:has(.naccount){scrollbar-gutter:stable;background:#06080d;color-scheme:dark
+ @media(prefers-reduced-motion:reduce){.naccount *{transition:none!important;scroll-behavior:auto!important}}
+ 
+ .naccount .otp-setup{display:flex;flex-direction:column;align-items:center;gap:18px}.naccount .secret-value{display:block;padding:12px;margin:12px 0;background:var(--surface);border:1px solid var(--line);overflow-wrap:anywhere;user-select:all}.naccount .recovery-check{display:flex;align-items:center;gap:10px;margin:16px 0}.naccount .recovery-check input{width:18px;height:18px;accent-color:var(--yellow)}
++
++/* Existing authentication primitives inherit the portal's semantic roles only inside the modal. */
++.naccount .embedded-auth{--text-width:100%;--label-color:var(--text);--primary-button-color:var(--yellow);--primary-button-label-color:var(--on-yellow);--primary-button-border-color:var(--yellow);--secondary-button-color:var(--control);--secondary-button-label-color:var(--text);--secondary-button-border-color:var(--control-line);--critical-indicator-color:var(--red);display:flex;flex-direction:column;gap:18px;min-width:0}
++.naccount .embedded-auth>form,.naccount .embedded-auth>section{width:100%;min-width:0}
++.naccount .embedded-auth input:not([type=checkbox]){width:100%;min-width:0;border-radius:3px}
++.naccount .embedded-auth input[type=checkbox]{accent-color:var(--yellow)}
++.naccount .embedded-auth :is(.bg-primaryButtonColor,.bg-secondaryButtonColor){min-height:40px;padding:9px 14px;border-radius:3px;font-size:14px}
++.naccount .embedded-auth .bg-primaryButtonColor:hover:not(:disabled){background:color-mix(in srgb,var(--yellow) 86%,white)}
++.naccount .embedded-auth .bg-secondaryButtonColor:hover:not(:disabled){background:var(--hover);border-color:var(--line-hover)}
++.naccount .embedded-auth button:disabled{cursor:not-allowed;opacity:.65}
++.naccount .embedded-auth :is(a,select){color:var(--text)}
++.naccount .embedded-auth select{background:var(--control);border:1px solid var(--control-line);border-radius:3px;padding:5px 8px}
++.naccount .embedded-auth select:focus-visible{outline:2px solid var(--yellow);outline-offset:2px}
++.naccount .auth-locale{display:flex;justify-content:flex-end}
++.naccount .embedded-auth .text-green{color:var(--green)}
++.naccount .embedded-auth .bg-primaryButtonColor{background:var(--yellow);color:var(--on-yellow);border-color:var(--yellow);font-weight:600}
++.naccount .embedded-auth .bg-secondaryButtonColor{background:var(--control);color:var(--text);border-color:var(--control-line)}
++.naccount .embedded-auth .text-criticalIndicatorColor{color:var(--danger-text)}
++.naccount .auth-dialoghead{display:flex;justify-content:flex-end;margin-bottom:12px}
+diff --git a/server/src/pages/hooks/useAcceptInvitationForm.test.tsx b/server/src/pages/hooks/useAcceptInvitationForm.test.tsx
+index b452b7aaae05e9d82542b0ae05be3479073ed0f3..30e09108db2701f535fd5e3aae07d9d92fea11dc 100644
+--- a/server/src/pages/hooks/useAcceptInvitationForm.test.tsx
++++ b/server/src/pages/hooks/useAcceptInvitationForm.test.tsx
+@@ -15,6 +15,8 @@ vi.mock(
+     useCallback: React.useCallback,
+     useMemo: React.useMemo,
+     useState: React.useState,
++    createContext: React.createContext,
++    useContext: React.useContext,
+     useEffect: React.useEffect,
+   }),
+ )
+diff --git a/server/src/pages/hooks/useAcceptInvitationForm.tsx b/server/src/pages/hooks/useAcceptInvitationForm.tsx
+index bd8012dcbfa9196c2ca3df2f699319b44391ff2a..de999ac01d27c9153ea132c567650248e5995399 100644
+--- a/server/src/pages/hooks/useAcceptInvitationForm.tsx
++++ b/server/src/pages/hooks/useAcceptInvitationForm.tsx
+@@ -1,3 +1,4 @@
++import { useAuthRuntime } from 'pages/tools/authRuntime'
+ import {
+   useCallback, useEffect, useMemo, useState,
+ } from 'hono/jsx'
+@@ -20,8 +21,9 @@ const useAcceptInvitationForm = ({
+   locale,
+   onSubmitError,
+ }: UseAcceptInvitationFormProps) => {
++  const runtime = useAuthRuntime()
+   const invitationParams = useMemo(
+-    () => getInvitationParams(),
++    () => getInvitationParams(runtime),
+     [],
+   )
+ 
+diff --git a/server/src/pages/hooks/useAppBanners.test.tsx b/server/src/pages/hooks/useAppBanners.test.tsx
+index 2eeb8c31d5b5b355ebb007e72812f9e6858237f6..993a807a507635b1fa5a17e3dc56a743e72fb637 100644
+--- a/server/src/pages/hooks/useAppBanners.test.tsx
++++ b/server/src/pages/hooks/useAppBanners.test.tsx
+@@ -19,6 +19,8 @@ vi.mock(
+   () => ({
+     useCallback: React.useCallback,
+     useState: React.useState,
++    createContext: React.createContext,
++    useContext: React.useContext,
+     useEffect: React.useEffect,
+   }),
+ )
+diff --git a/server/src/pages/hooks/useChangeEmailForm.test.tsx b/server/src/pages/hooks/useChangeEmailForm.test.tsx
+index c41004de6d52bc51acec18e33ff9ac3812958ad3..ecc37a1f71b39fedacc9d3dcd4ce4cce0c78eb8e 100644
+--- a/server/src/pages/hooks/useChangeEmailForm.test.tsx
++++ b/server/src/pages/hooks/useChangeEmailForm.test.tsx
+@@ -16,6 +16,8 @@ vi.mock(
+     useCallback: React.useCallback,
+     useMemo: React.useMemo,
+     useState: React.useState,
++    createContext: React.createContext,
++    useContext: React.useContext,
+   }),
+ )
+ 
+diff --git a/server/src/pages/hooks/useChangeEmailForm.tsx b/server/src/pages/hooks/useChangeEmailForm.tsx
+index 3970f075784e5974d40a394d1b958ead475b1a37..fc4ff7eaaea68603cd65b97f2bd56c1578a0f553 100644
+--- a/server/src/pages/hooks/useChangeEmailForm.tsx
++++ b/server/src/pages/hooks/useChangeEmailForm.tsx
+@@ -1,3 +1,4 @@
++import { useAuthRuntime } from 'pages/tools/authRuntime'
+ import {
+   useCallback, useMemo, useState,
+ } from 'hono/jsx'
+@@ -24,8 +25,9 @@ const useChangeEmailForm = ({
+   locale,
+   onSubmitError,
+ }: UseChangeEmailFormProps) => {
++  const runtime = useAuthRuntime()
+   const followUpParams = useMemo(
+-    () => getFollowUpParams(),
++    () => getFollowUpParams(runtime),
+     [],
+   )
+ 
+diff --git a/server/src/pages/hooks/useChangeOrgForm.test.tsx b/server/src/pages/hooks/useChangeOrgForm.test.tsx
+index 2a0522037c310a8103ca732f63c20c911aeb2294..8a6c98b7b6ddf56195bcab23335fb13428cb0d56 100644
+--- a/server/src/pages/hooks/useChangeOrgForm.test.tsx
++++ b/server/src/pages/hooks/useChangeOrgForm.test.tsx
+@@ -17,6 +17,8 @@ vi.mock(
+     useCallback: React.useCallback,
+     useMemo: React.useMemo,
+     useState: React.useState,
++    createContext: React.createContext,
++    useContext: React.useContext,
+   }),
+ )
+ 
+diff --git a/server/src/pages/hooks/useChangeOrgForm.tsx b/server/src/pages/hooks/useChangeOrgForm.tsx
+index 784b6e967d13714059e9cdf85e99236d3c400e6c..916ce439c357204a4eced290f2fed53d0f9771a4 100644
+--- a/server/src/pages/hooks/useChangeOrgForm.tsx
++++ b/server/src/pages/hooks/useChangeOrgForm.tsx
+@@ -1,3 +1,4 @@
++import { useAuthRuntime } from 'pages/tools/authRuntime'
+ import {
+   useCallback, useMemo, useState,
+ } from 'hono/jsx'
+@@ -22,8 +23,9 @@ const useChangeOrgForm = ({
+   locale,
+   onSubmitError,
+ }: UseChangeOrgFormProps) => {
++  const runtime = useAuthRuntime()
+   const followUpParams = useMemo(
+-    () => getFollowUpParams(),
++    () => getFollowUpParams(runtime),
+     [],
+   )
+ 
+diff --git a/server/src/pages/hooks/useChangePasswordForm.test.tsx b/server/src/pages/hooks/useChangePasswordForm.test.tsx
+index 1929abf9d9c5ab63b8f37e513871534156d0ebf5..096e1cd116188df38ee2a83c5d81dbf944e5157a 100644
+--- a/server/src/pages/hooks/useChangePasswordForm.test.tsx
++++ b/server/src/pages/hooks/useChangePasswordForm.test.tsx
+@@ -16,6 +16,8 @@ vi.mock(
+   () => ({
+     useMemo: React.useMemo,
+     useState: React.useState,
++    createContext: React.createContext,
++    useContext: React.useContext,
+   }),
+ )
+ 
+diff --git a/server/src/pages/hooks/useChangePasswordForm.tsx b/server/src/pages/hooks/useChangePasswordForm.tsx
+index 37382e7db06ab29c60bd898657fc1db303f3760d..7ffecf2cef562efffe2d61fedde311713ca029d1 100644
+--- a/server/src/pages/hooks/useChangePasswordForm.tsx
++++ b/server/src/pages/hooks/useChangePasswordForm.tsx
+@@ -1,3 +1,4 @@
++import { useAuthRuntime } from 'pages/tools/authRuntime'
+ import {
+   useState, useMemo,
+ } from 'hono/jsx'
+@@ -22,8 +23,9 @@ const useChangePasswordForm = ({
+   locale,
+   onSubmitError,
+ }: UseChangePasswordFormProps) => {
++  const runtime = useAuthRuntime()
+   const followUpParams = useMemo(
+-    () => getFollowUpParams(),
++    () => getFollowUpParams(runtime),
+     [],
+   )
+ 
+diff --git a/server/src/pages/hooks/useConsentForm.test.tsx b/server/src/pages/hooks/useConsentForm.test.tsx
+index cad7143f5aaa4149ac944241c24eab4ba9d3f14e..8f1175e86cd101a9fe66afefcb23247a01377c3b 100644
+--- a/server/src/pages/hooks/useConsentForm.test.tsx
++++ b/server/src/pages/hooks/useConsentForm.test.tsx
+@@ -14,6 +14,8 @@ vi.mock(
+   () => ({
+     useMemo: React.useMemo,
+     useState: React.useState,
++    createContext: React.createContext,
++    useContext: React.useContext,
+     useCallback: React.useCallback,
+   }),
+ )
+diff --git a/server/src/pages/hooks/useConsentForm.tsx b/server/src/pages/hooks/useConsentForm.tsx
+index 9cd79a8eb2b0c6736f33752a6197d2caaa3c16f0..7c7d76f692cdba4cd0faa0207e0405680a8acefa 100644
+--- a/server/src/pages/hooks/useConsentForm.tsx
++++ b/server/src/pages/hooks/useConsentForm.tsx
+@@ -1,3 +1,4 @@
++import { useAuthRuntime } from 'pages/tools/authRuntime'
+ import {
+   useCallback, useMemo, useState,
+ } from 'hono/jsx'
+@@ -24,8 +25,9 @@ const useConsentForm = ({
+   onSubmitError,
+   onSwitchView,
+ }: UseConsentFormProps) => {
++  const runtime = useAuthRuntime()
+   const followUpParams = useMemo(
+-    () => getFollowUpParams(),
++    () => getFollowUpParams(runtime),
+     [],
+   )
+   const qs = `?code=${followUpParams.code}&locale=${locale}&org=${followUpParams.org}`
+@@ -83,6 +85,7 @@ const useConsentForm = ({
+             response,
+             locale,
+             onSwitchView,
++            runtime,
+           )
+         })
+         .catch((error) => {
+@@ -97,7 +100,13 @@ const useConsentForm = ({
+ 
+   const handleDecline = useCallback(
+     () => {
+-      window.location.href = followUpParams.redirectUri
++      if (runtime) {
++        if (runtime.active) {
++          const url = new URL(followUpParams.redirectUri)
++          url.searchParams.set('error', 'access_denied')
++          runtime.complete(url.href)
++        }
++      } else window.location.href = followUpParams.redirectUri
+     },
+     [followUpParams],
+   )
+diff --git a/server/src/pages/hooks/useCurrentView.test.tsx b/server/src/pages/hooks/useCurrentView.test.tsx
+index cc45c1295d8cee47cd1ffdc27842e32d527089b5..a55d741d9a040def9114c89484c910dcf9aac775 100644
+--- a/server/src/pages/hooks/useCurrentView.test.tsx
++++ b/server/src/pages/hooks/useCurrentView.test.tsx
+@@ -19,6 +19,8 @@ vi.mock(
+     useCallback: React.useCallback,
+     useMemo: React.useMemo,
+     useState: React.useState,
++    createContext: React.createContext,
++    useContext: React.useContext,
+   }),
+ )
+ 
+diff --git a/server/src/pages/hooks/useCurrentView.ts b/server/src/pages/hooks/useCurrentView.ts
+index 3c1e0dcdf1c5bd6fc3b8a28afda69e6dedceb252..39aca5dd5c95c98f2793973bfc84f361be5315b7 100644
+--- a/server/src/pages/hooks/useCurrentView.ts
++++ b/server/src/pages/hooks/useCurrentView.ts
+@@ -7,33 +7,36 @@ import {
+ } from 'pages/tools/param'
+ import { View } from 'configs/route'
+ import useInitialProps from './useInitialProps'
++import { useAuthRuntime } from 'pages/tools/authRuntime'
+ 
+ export { View }
+ 
+ const useCurrentView = () => {
++  const runtime = useAuthRuntime()
+   const { initialProps } = useInitialProps()
+   const initialView = useMemo(
+     () => {
+-      const step = getStepFromParams()
++      const step = getStepFromParams(runtime)
+       if (step) {
+         return step
+       }
+-      switch (window.location.pathname) {
++      const location = runtime?.url ?? window.location
++      switch (location.pathname) {
+       case routeConfig.IdentityRoute.AuthCodeExpiredView:
+         return View.AuthCodeExpired
+       case routeConfig.IdentityRoute.VerifyEmailView: {
+-        const { invitationToken } = getInvitationParams()
++        const { invitationToken } = getInvitationParams(runtime)
+         if (invitationToken) return View.AcceptInvitation
+         return View.VerifyEmail
+       }
+       case routeConfig.IdentityRoute.ProcessView: {
+-        const { otp } = getMagicSignInParams()
++        const { otp } = getMagicSignInParams(runtime)
+         if (otp) return View.MagicSignIn
+         return View.SignIn
+       }
+       default:
+-        if (window.location.pathname === routeConfig.IdentityRoute.AuthorizeView &&
+-          new URLSearchParams(window.location.search).get('screen') === 'signup' && initialProps.enableSignUp) return View.SignUp
++        if (location.pathname === routeConfig.IdentityRoute.AuthorizeView &&
++          new URLSearchParams(location.search).get('screen') === 'signup' && initialProps.enableSignUp) return View.SignUp
+         return View.SignIn
+       }
+     },
+@@ -44,6 +47,7 @@ const useCurrentView = () => {
+ 
+   const handleSwitchView = useCallback(
+     (view: View) => {
++      if (runtime && !runtime.active) return
+       setView(view)
+     },
+     [],
+diff --git a/server/src/pages/hooks/useEmailMfaForm.test.tsx b/server/src/pages/hooks/useEmailMfaForm.test.tsx
+index d03ea90575908aad085e7b9348364764fb951fbf..e3cc5a1bc1366b1b221e54c1635f37d803a980a7 100644
+--- a/server/src/pages/hooks/useEmailMfaForm.test.tsx
++++ b/server/src/pages/hooks/useEmailMfaForm.test.tsx
+@@ -18,6 +18,8 @@ vi.mock(
+     useCallback: React.useCallback,
+     useMemo: React.useMemo,
+     useState: React.useState,
++    createContext: React.createContext,
++    useContext: React.useContext,
+   }),
+ )
+ 
+diff --git a/server/src/pages/hooks/useEmailMfaForm.tsx b/server/src/pages/hooks/useEmailMfaForm.tsx
+index d9d20af6e45305ac1fa019b56087ecced5105796..806f8d408273d972753e1f850c0eb0fa49d19c3c 100644
+--- a/server/src/pages/hooks/useEmailMfaForm.tsx
++++ b/server/src/pages/hooks/useEmailMfaForm.tsx
+@@ -1,3 +1,4 @@
++import { useAuthRuntime } from 'pages/tools/authRuntime'
+ import { object } from 'yup'
+ import {
+   useCallback, useMemo, useState,
+@@ -26,8 +27,9 @@ const useEmailMfaForm = ({
+   onSubmitError,
+   onSwitchView,
+ }: UseEmailMfaFormProps) => {
++  const runtime = useAuthRuntime()
+   const followUpParams = useMemo(
+-    () => getFollowUpParams(),
++    () => getFollowUpParams(runtime),
+     [],
+   )
+ 
+@@ -130,6 +132,7 @@ const useEmailMfaForm = ({
+             response,
+             locale,
+             onSwitchView,
++            runtime,
+           )
+         })
+         .catch((error) => {
+diff --git a/server/src/pages/hooks/useInitialProps.ts b/server/src/pages/hooks/useInitialProps.ts
+index 42161317d95bfacd707ba409477057797a8c603d..05f467cf2cba59d9e511b207df81973c3e066c56 100644
+--- a/server/src/pages/hooks/useInitialProps.ts
++++ b/server/src/pages/hooks/useInitialProps.ts
+@@ -1,5 +1,6 @@
+ import { useMemo } from 'hono/jsx'
+ import { typeConfig } from 'configs'
++import { useAuthRuntime } from 'pages/tools/authRuntime'
+ 
+ export interface InitialProps {
+   locales: typeConfig.Locale[];
+@@ -29,9 +30,10 @@ export interface InitialProps {
+ }
+ 
+ const useInitialProps = () => {
++  const runtime = useAuthRuntime()
+   const initialProps: InitialProps = useMemo(
+     () => {
+-      const intialProps = (
++      const intialProps = runtime?.initialProps ?? ((
+         '__initialProps' in window &&
+         typeof window.__initialProps === 'object' &&
+         !!window.__initialProps
+@@ -40,7 +42,7 @@ const useInitialProps = () => {
+         : {
+           locales: [],
+           logoUrl: '',
+-        }
++        })
+ 
+       const locales = 'locales' in intialProps ? String(intialProps.locales).split(',') : []
+ 
+diff --git a/server/src/pages/hooks/useLocale.test.tsx b/server/src/pages/hooks/useLocale.test.tsx
+index 0dfdc78aa3e1b635791a68fff649efbd9a6c4fcd..af860a7170444978e06f1c73140abeeb141d0050 100644
+--- a/server/src/pages/hooks/useLocale.test.tsx
++++ b/server/src/pages/hooks/useLocale.test.tsx
+@@ -13,6 +13,8 @@ vi.mock(
+   () => ({
+     useCallback: React.useCallback,
+     useState: React.useState,
++    createContext: React.createContext,
++    useContext: React.useContext,
+   }),
+ )
+ 
+diff --git a/server/src/pages/hooks/useLocale.ts b/server/src/pages/hooks/useLocale.ts
+index 84160f3a114bfe92750ac4e748a9158668a4b815..f2e83272083c4ad06a5fafd8853520b8bf68efbb 100644
+--- a/server/src/pages/hooks/useLocale.ts
++++ b/server/src/pages/hooks/useLocale.ts
+@@ -2,25 +2,23 @@ import {
+   useCallback, useState,
+ } from 'hono/jsx'
+ import { typeConfig } from 'configs'
++import { useAuthRuntime, navigateAuth } from 'pages/tools/authRuntime'
+ 
+ const useLocale = ({ initialLocale }: {
+   initialLocale: typeConfig.Locale;
+ }) => {
++  const runtime = useAuthRuntime()
+   const [locale, setLocale] = useState(initialLocale)
+ 
+   const handleSwitchLocale = useCallback(
+     (locale: typeConfig.Locale) => {
+       setLocale(locale)
+-      const url = new URL(window.location.href)
++      const url = new URL(runtime?.url.href ?? window.location.href)
+       url.searchParams.set(
+         'locale',
+         locale,
+       )
+-      window.history.pushState(
+-        {},
+-        '',
+-        url,
+-      )
++      navigateAuth(url, runtime)
+     },
+     [],
+   )
+diff --git a/server/src/pages/hooks/useMagicSignInForm.test.tsx b/server/src/pages/hooks/useMagicSignInForm.test.tsx
+index 89f86b4c60503837daca80c934fefbd7e64e02f8..3d10f7ee8740940c39c515eb682c1c599f0802e9 100644
+--- a/server/src/pages/hooks/useMagicSignInForm.test.tsx
++++ b/server/src/pages/hooks/useMagicSignInForm.test.tsx
+@@ -17,6 +17,8 @@ vi.mock(
+     useCallback: React.useCallback,
+     useMemo: React.useMemo,
+     useState: React.useState,
++    createContext: React.createContext,
++    useContext: React.useContext,
+     useEffect: React.useEffect,
+   }),
+ )
+diff --git a/server/src/pages/hooks/useMagicSignInForm.tsx b/server/src/pages/hooks/useMagicSignInForm.tsx
+index 189d6fe40d3302eee2a6da0c16e20b38dc7bd093..2ced7fded82539d6220579df7a6d3653231c6c3f 100644
+--- a/server/src/pages/hooks/useMagicSignInForm.tsx
++++ b/server/src/pages/hooks/useMagicSignInForm.tsx
+@@ -1,3 +1,4 @@
++import { useAuthRuntime } from 'pages/tools/authRuntime'
+ import {
+   useCallback, useEffect, useState,
+ } from 'hono/jsx'
+@@ -22,6 +23,7 @@ const useMagicSignInForm = ({
+   onSubmitError,
+   onSwitchView,
+ }: UseMagicSignInFormProps) => {
++  const runtime = useAuthRuntime()
+   const { initialProps } = useInitialProps()
+   const [isProcessing, setIsProcessing] = useState(true)
+   const [isSuccess, setIsSuccess] = useState(false)
+@@ -37,7 +39,7 @@ const useMagicSignInForm = ({
+ 
+       const {
+         code, otp, org,
+-      } = getMagicSignInParams()
++      } = getMagicSignInParams(runtime)
+ 
+       if (!code || !otp) {
+         setIsProcessing(false)
+@@ -68,6 +70,7 @@ const useMagicSignInForm = ({
+             response,
+             locale,
+             onSwitchView,
++            runtime,
+           )
+         })
+         .catch((error) => {
+diff --git a/server/src/pages/hooks/useManagePasskeyForm.test.tsx b/server/src/pages/hooks/useManagePasskeyForm.test.tsx
+index 3b8d773cd843151917fa39bfcb7039af4af8f292..f5f62a19efcc2fba1249da27c416e9eda1c396a9 100644
+--- a/server/src/pages/hooks/useManagePasskeyForm.test.tsx
++++ b/server/src/pages/hooks/useManagePasskeyForm.test.tsx
+@@ -18,6 +18,8 @@ vi.mock(
+     useCallback: React.useCallback,
+     useMemo: React.useMemo,
+     useState: React.useState,
++    createContext: React.createContext,
++    useContext: React.useContext,
+   }),
+ )
+ 
+diff --git a/server/src/pages/hooks/useManagePasskeyForm.tsx b/server/src/pages/hooks/useManagePasskeyForm.tsx
+index 0963b32878a10703f64152f36f94e126e6deffa9..93efbfabc94287814c37e6a08cc688d3316480e8 100644
+--- a/server/src/pages/hooks/useManagePasskeyForm.tsx
++++ b/server/src/pages/hooks/useManagePasskeyForm.tsx
+@@ -1,3 +1,4 @@
++import { useAuthRuntime } from 'pages/tools/authRuntime'
+ import {
+   useCallback, useMemo, useState,
+ } from 'hono/jsx'
+@@ -24,8 +25,9 @@ const useManagePasskeyForm = ({
+   locale,
+   onSubmitError,
+ }: UseManagePasskeyFormProps) => {
++  const runtime = useAuthRuntime()
+   const followUpParams = useMemo(
+-    () => getFollowUpParams(),
++    () => getFollowUpParams(runtime),
+     [],
+   )
+   const qs = `?code=${followUpParams.code}&locale=${locale}&org=${followUpParams.org}`
+diff --git a/server/src/pages/hooks/useManageRecoveryCodeForm.test.tsx b/server/src/pages/hooks/useManageRecoveryCodeForm.test.tsx
+index 5f257be493485c9ba439ac0b877e016f41b88a3f..879eeb32c303b0c2ad2b74b31f523a581f936711 100644
+--- a/server/src/pages/hooks/useManageRecoveryCodeForm.test.tsx
++++ b/server/src/pages/hooks/useManageRecoveryCodeForm.test.tsx
+@@ -16,6 +16,8 @@ vi.mock(
+     useCallback: React.useCallback,
+     useMemo: React.useMemo,
+     useState: React.useState,
++    createContext: React.createContext,
++    useContext: React.useContext,
+   }),
+ )
+ 
+diff --git a/server/src/pages/hooks/useManageRecoveryCodeForm.tsx b/server/src/pages/hooks/useManageRecoveryCodeForm.tsx
+index 4e7796fec8a1046561d28dd2598c640dc1a6f12b..77f0d713af82e2f91988b2a999ab50ae4811371a 100644
+--- a/server/src/pages/hooks/useManageRecoveryCodeForm.tsx
++++ b/server/src/pages/hooks/useManageRecoveryCodeForm.tsx
+@@ -1,3 +1,4 @@
++import { useAuthRuntime } from 'pages/tools/authRuntime'
+ import {
+   useCallback, useMemo, useState,
+ } from 'hono/jsx'
+@@ -20,8 +21,9 @@ const useManageRecoveryCodeForm = ({
+   locale,
+   onSubmitError,
+ }: UseManageRecoveryCodeFormProps) => {
++  const runtime = useAuthRuntime()
+   const followUpParams = useMemo(
+-    () => getFollowUpParams(),
++    () => getFollowUpParams(runtime),
+     [],
+   )
+ 
+diff --git a/server/src/pages/hooks/useMfaEnrollForm.test.tsx b/server/src/pages/hooks/useMfaEnrollForm.test.tsx
+index 66f1ab03d636b229fe3c0f314750cda61691a077..3ea3dc5eb584577c750551a7f5c5c419aa0be3ad 100644
+--- a/server/src/pages/hooks/useMfaEnrollForm.test.tsx
++++ b/server/src/pages/hooks/useMfaEnrollForm.test.tsx
+@@ -20,6 +20,8 @@ vi.mock(
+     useCallback: React.useCallback,
+     useMemo: React.useMemo,
+     useState: React.useState,
++    createContext: React.createContext,
++    useContext: React.useContext,
+   }),
+ )
+ 
+diff --git a/server/src/pages/hooks/useMfaEnrollForm.tsx b/server/src/pages/hooks/useMfaEnrollForm.tsx
+index 5104bfbaebe954d97eea0b340021b54e90c1ffcd..74bc20b3bfded11adf998876087f95c86d1ab141 100644
+--- a/server/src/pages/hooks/useMfaEnrollForm.tsx
++++ b/server/src/pages/hooks/useMfaEnrollForm.tsx
+@@ -1,3 +1,4 @@
++import { useAuthRuntime } from 'pages/tools/authRuntime'
+ import {
+   useCallback, useMemo, useState,
+ } from 'hono/jsx'
+@@ -24,8 +25,9 @@ const useMfaEnrollForm = ({
+   onSubmitError,
+   onSwitchView,
+ }: UseMfaEnrollFormProps) => {
++  const runtime = useAuthRuntime()
+   const followUpParams = useMemo(
+-    () => getFollowUpParams(),
++    () => getFollowUpParams(runtime),
+     [],
+   )
+   const qs = `?code=${followUpParams.code}&locale=${locale}&org=${followUpParams.org}`
+@@ -82,6 +84,7 @@ const useMfaEnrollForm = ({
+             response,
+             locale,
+             onSwitchView,
++            runtime,
+           )
+         })
+         .catch((error) => {
+diff --git a/server/src/pages/hooks/useOtpMfaForm.test.tsx b/server/src/pages/hooks/useOtpMfaForm.test.tsx
+index dfbe2b4c3ddb852bfd0c57870360f50f1e62a9b9..4fc691def9b2a858c31fd111ae06fd37fa31bbd8 100644
+--- a/server/src/pages/hooks/useOtpMfaForm.test.tsx
++++ b/server/src/pages/hooks/useOtpMfaForm.test.tsx
+@@ -20,6 +20,8 @@ vi.mock(
+     useCallback: React.useCallback,
+     useMemo: React.useMemo,
+     useState: React.useState,
++    createContext: React.createContext,
++    useContext: React.useContext,
+   }),
+ )
+ 
+diff --git a/server/src/pages/hooks/useOtpMfaForm.tsx b/server/src/pages/hooks/useOtpMfaForm.tsx
+index 9ada4919fe222842481c7f4d571f2d42beb11a1c..f1d65b6d1b10efcc8b891f65942813c5381c1bea 100644
+--- a/server/src/pages/hooks/useOtpMfaForm.tsx
++++ b/server/src/pages/hooks/useOtpMfaForm.tsx
+@@ -1,3 +1,4 @@
++import { useAuthRuntime } from 'pages/tools/authRuntime'
+ import {
+   useCallback, useMemo, useState,
+ } from 'hono/jsx'
+@@ -29,8 +30,9 @@ const useOtpMfaForm = ({
+   onSubmitError,
+   onSwitchView,
+ }: UseOtpMfaFormProps) => {
++  const runtime = useAuthRuntime()
+   const followUpParams = useMemo(
+-    () => getFollowUpParams(),
++    () => getFollowUpParams(runtime),
+     [],
+   )
+   const qs = `?code=${followUpParams.code}&locale=${locale}&org=${followUpParams.org}`
+@@ -149,6 +151,7 @@ const useOtpMfaForm = ({
+             response,
+             locale,
+             onSwitchView,
++            runtime,
+           )
+         })
+         .catch((error) => {
+diff --git a/server/src/pages/hooks/usePasskeyEnrollForm.test.tsx b/server/src/pages/hooks/usePasskeyEnrollForm.test.tsx
+index dba0fae890738ed221db51ff9f77adba021d5f83..6ad366bd52666bf45a7b1d1fcfc4d2adbc768f70 100644
+--- a/server/src/pages/hooks/usePasskeyEnrollForm.test.tsx
++++ b/server/src/pages/hooks/usePasskeyEnrollForm.test.tsx
+@@ -20,6 +20,8 @@ vi.mock(
+     useCallback: React.useCallback,
+     useMemo: React.useMemo,
+     useState: React.useState,
++    createContext: React.createContext,
++    useContext: React.useContext,
+   }),
+ )
+ 
+diff --git a/server/src/pages/hooks/usePasskeyEnrollForm.tsx b/server/src/pages/hooks/usePasskeyEnrollForm.tsx
+index 2f5c8e5d04a864f7b1aed1a57d2b25a416ea3cae..5791a27a23833edd035382244a4dac34188e0e73 100644
+--- a/server/src/pages/hooks/usePasskeyEnrollForm.tsx
++++ b/server/src/pages/hooks/usePasskeyEnrollForm.tsx
+@@ -1,3 +1,4 @@
++import { useAuthRuntime } from 'pages/tools/authRuntime'
+ import {
+   useCallback, useMemo, useState,
+ } from 'hono/jsx'
+@@ -26,8 +27,9 @@ const usePasskeyEnrollForm = ({
+   onSubmitError,
+   onSwitchView,
+ }: UsePasskeyEnrollFormProps) => {
++  const runtime = useAuthRuntime()
+   const followUpParams = useMemo(
+-    () => getFollowUpParams(),
++    () => getFollowUpParams(runtime),
+     [],
+   )
+   const qs = `?code=${followUpParams.code}&locale=${locale}&org=${followUpParams.org}`
+@@ -88,6 +90,7 @@ const usePasskeyEnrollForm = ({
+             response,
+             locale,
+             onSwitchView,
++            runtime,
+           )
+         })
+         .catch((error) => {
+@@ -140,6 +143,7 @@ const usePasskeyEnrollForm = ({
+             response,
+             locale,
+             onSwitchView,
++            runtime,
+           )
+         })
+         .catch((error) => {
+diff --git a/server/src/pages/hooks/usePasskeyVerifyForm.test.tsx b/server/src/pages/hooks/usePasskeyVerifyForm.test.tsx
+index 095630e925630c15734ea916109be4c49a66d007..9891a70d466e915bd3cca58d0e9f8ee6e2eff64b 100644
+--- a/server/src/pages/hooks/usePasskeyVerifyForm.test.tsx
++++ b/server/src/pages/hooks/usePasskeyVerifyForm.test.tsx
+@@ -23,6 +23,8 @@ vi.mock(
+     useCallback: React.useCallback,
+     useMemo: React.useMemo,
+     useState: React.useState,
++    createContext: React.createContext,
++    useContext: React.useContext,
+     useEffect: React.useEffect,
+   }),
+ )
+diff --git a/server/src/pages/hooks/usePasskeyVerifyForm.tsx b/server/src/pages/hooks/usePasskeyVerifyForm.tsx
+index 80cedb77b8de627a245c104ccfca7b24ec277540..887dbb02e418ddeaefed3994f1e0bf616c49c1d8 100644
+--- a/server/src/pages/hooks/usePasskeyVerifyForm.tsx
++++ b/server/src/pages/hooks/usePasskeyVerifyForm.tsx
+@@ -1,3 +1,4 @@
++import { useAuthRuntime } from 'pages/tools/authRuntime'
+ import {
+   useCallback, useState, useEffect,
+ } from 'hono/jsx'
+@@ -29,6 +30,7 @@ const usePasskeyVerifyForm = ({
+   params,
+   initialProps,
+ }: UsePasskeyVerifyFormProps) => {
++  const runtime = useAuthRuntime()
+   const [passkeyOption, setPasskeyOption] = useState<GetAuthorizePasskeyVerifyRes['passkeyOption'] | null | false>(null)
+ 
+   const [isVerifyingPasskey, setIsVerifyingPasskey] = useState(false)
+@@ -86,6 +88,7 @@ const usePasskeyVerifyForm = ({
+             response,
+             locale,
+             onSwitchView,
++            runtime,
+           )
+         })
+         .catch((error) => {
+diff --git a/server/src/pages/hooks/usePasswordlessVerifyForm.test.tsx b/server/src/pages/hooks/usePasswordlessVerifyForm.test.tsx
+index e65b0d541b5b38e7a2161821f5c121da648cd229..9e85233c18c15b1ad805f842fc2279326ca2adeb 100644
+--- a/server/src/pages/hooks/usePasswordlessVerifyForm.test.tsx
++++ b/server/src/pages/hooks/usePasswordlessVerifyForm.test.tsx
+@@ -18,6 +18,8 @@ vi.mock(
+     useCallback: React.useCallback,
+     useMemo: React.useMemo,
+     useState: React.useState,
++    createContext: React.createContext,
++    useContext: React.useContext,
+   }),
+ )
+ 
+diff --git a/server/src/pages/hooks/usePasswordlessVerifyForm.tsx b/server/src/pages/hooks/usePasswordlessVerifyForm.tsx
+index 78b21206e3fb61d30793c71844a8400f726b6e0e..79db91bad6fb3f1329161fc634608eff0160e105 100644
+--- a/server/src/pages/hooks/usePasswordlessVerifyForm.tsx
++++ b/server/src/pages/hooks/usePasswordlessVerifyForm.tsx
+@@ -1,3 +1,4 @@
++import { useAuthRuntime } from 'pages/tools/authRuntime'
+ import { object } from 'yup'
+ import {
+   useCallback, useMemo, useState,
+@@ -26,8 +27,9 @@ const usePasswordlessVerifyForm = ({
+   onSubmitError,
+   onSwitchView,
+ }: UsePasswordlessVerifyFormProps) => {
++  const runtime = useAuthRuntime()
+   const followUpParams = useMemo(
+-    () => getFollowUpParams(),
++    () => getFollowUpParams(runtime),
+     [],
+   )
+ 
+@@ -121,6 +123,7 @@ const usePasswordlessVerifyForm = ({
+             response,
+             locale,
+             onSwitchView,
++            runtime,
+           )
+         })
+         .catch((error) => {
+diff --git a/server/src/pages/hooks/useRecoveryCodeEnrollForm.test.tsx b/server/src/pages/hooks/useRecoveryCodeEnrollForm.test.tsx
+index 9252bb10b7efbcfc5aadeb5f6fb62e37bd7fcc85..d7640d8b189e04c24247ff672d5e1ad890b971d0 100644
+--- a/server/src/pages/hooks/useRecoveryCodeEnrollForm.test.tsx
++++ b/server/src/pages/hooks/useRecoveryCodeEnrollForm.test.tsx
+@@ -18,6 +18,8 @@ vi.mock(
+     useCallback: React.useCallback,
+     useMemo: React.useMemo,
+     useState: React.useState,
++    createContext: React.createContext,
++    useContext: React.useContext,
+   }),
+ )
+ 
+@@ -206,6 +208,7 @@ test(
+       fakeResponseData,
+       'en',
+       onSwitchView,
++      null,
+     )
+ 
+     // Verify that onSwitchView was called by our mock
+diff --git a/server/src/pages/hooks/useRecoveryCodeEnrollForm.tsx b/server/src/pages/hooks/useRecoveryCodeEnrollForm.tsx
+index 39f40cf3d6f0358bf1ed79d548c548d03443b97d..d66d0b678a89da6f802c289b3ef145f1285def32 100644
+--- a/server/src/pages/hooks/useRecoveryCodeEnrollForm.tsx
++++ b/server/src/pages/hooks/useRecoveryCodeEnrollForm.tsx
+@@ -1,3 +1,4 @@
++import { useAuthRuntime } from 'pages/tools/authRuntime'
+ import {
+   useCallback, useMemo, useState,
+ } from 'hono/jsx'
+@@ -22,8 +23,9 @@ const useRecoveryCodeEnrollForm = ({
+   onSubmitError,
+   onSwitchView,
+ }: UseRecoveryCodeEnrollFormProps) => {
++  const runtime = useAuthRuntime()
+   const followUpParams = useMemo(
+-    () => getFollowUpParams(),
++    () => getFollowUpParams(runtime),
+     [],
+   )
+   const qs = `?code=${followUpParams.code}&locale=${locale}&org=${followUpParams.org}`
+@@ -77,6 +79,7 @@ const useRecoveryCodeEnrollForm = ({
+             response,
+             locale,
+             onSwitchView,
++            runtime,
+           )
+         })
+         .catch((error) => {
+diff --git a/server/src/pages/hooks/useRecoveryCodeForm.test.tsx b/server/src/pages/hooks/useRecoveryCodeForm.test.tsx
+index 388b0382e407b74400be74f6c2fba3c4e04eb01d..560bf6c304c07f2484fd4ba4a3ec09eed67c9bd7 100644
+--- a/server/src/pages/hooks/useRecoveryCodeForm.test.tsx
++++ b/server/src/pages/hooks/useRecoveryCodeForm.test.tsx
+@@ -21,6 +21,8 @@ vi.mock(
+     useCallback: React.useCallback,
+     useMemo: React.useMemo,
+     useState: React.useState,
++    createContext: React.createContext,
++    useContext: React.useContext,
+   }),
+ )
+ 
+@@ -306,6 +308,7 @@ describe(
+           fakeResponseData,
+           'en',
+           onSwitchView,
++          null,
+         )
+ 
+         // Verify onSwitchView was called
+@@ -375,6 +378,7 @@ describe(
+           fakeResponseData,
+           'en',
+           onSwitchView,
++          null,
+         )
+ 
+         fetchSpy.mockRestore()
+diff --git a/server/src/pages/hooks/useRecoveryCodeForm.tsx b/server/src/pages/hooks/useRecoveryCodeForm.tsx
+index 393dc89815881d6851013834b242c8d2c06acb4c..94f47df22a11106e6e831283bf9cdd96c5da24f5 100644
+--- a/server/src/pages/hooks/useRecoveryCodeForm.tsx
++++ b/server/src/pages/hooks/useRecoveryCodeForm.tsx
+@@ -1,3 +1,4 @@
++import { useAuthRuntime } from 'pages/tools/authRuntime'
+ import {
+   useCallback, useMemo, useState,
+ } from 'hono/jsx'
+@@ -32,6 +33,7 @@ const useRecoveryCodeForm = ({
+   onSubmitError,
+   onSwitchView,
+ }: UseRecoveryCodeFormProps) => {
++  const runtime = useAuthRuntime()
+   const [isSubmitting, setIsSubmitting] = useState(false)
+ 
+   const [email, setEmail] = useState('')
+@@ -121,6 +123,7 @@ const useRecoveryCodeForm = ({
+             response,
+             locale,
+             onSwitchView,
++            runtime,
+           )
+         })
+         .catch((error) => {
+@@ -147,6 +150,7 @@ const useRecoveryCodeForm = ({
+         pendingResponse,
+         locale,
+         onSwitchView,
++        runtime,
+       )
+     },
+     [pendingResponse, locale, onSwitchView],
+diff --git a/server/src/pages/hooks/useResetMfaForm.test.tsx b/server/src/pages/hooks/useResetMfaForm.test.tsx
+index 33e2906a89409590c36c55851f9aa2584004d3a6..0f981f8ab00701cad6aa31266619a599a11c7cec 100644
+--- a/server/src/pages/hooks/useResetMfaForm.test.tsx
++++ b/server/src/pages/hooks/useResetMfaForm.test.tsx
+@@ -15,6 +15,8 @@ vi.mock(
+   () => ({
+     useMemo: React.useMemo,
+     useState: React.useState,
++    createContext: React.createContext,
++    useContext: React.useContext,
+   }),
+ )
+ 
+diff --git a/server/src/pages/hooks/useResetMfaForm.tsx b/server/src/pages/hooks/useResetMfaForm.tsx
+index 8951ce4390136183ca9be54bdca54d6bc7693b5d..a9043f7ca2fb0f1db88c70864a086b706a2e79ef 100644
+--- a/server/src/pages/hooks/useResetMfaForm.tsx
++++ b/server/src/pages/hooks/useResetMfaForm.tsx
+@@ -1,3 +1,4 @@
++import { useAuthRuntime } from 'pages/tools/authRuntime'
+ import {
+   useState, useMemo,
+ } from 'hono/jsx'
+@@ -18,8 +19,9 @@ const useResetMfaForm = ({
+   locale,
+   onSubmitError,
+ }: UseResetMfaFormProps) => {
++  const runtime = useAuthRuntime()
+   const followUpParams = useMemo(
+-    () => getFollowUpParams(),
++    () => getFollowUpParams(runtime),
+     [],
+   )
+ 
+diff --git a/server/src/pages/hooks/useResetPasswordForm.test.tsx b/server/src/pages/hooks/useResetPasswordForm.test.tsx
+index 38656838098bf94062af1b437d7f065e64b831a5..85e648c7dedaf5a085f4a72b46b9517367cf79f2 100644
+--- a/server/src/pages/hooks/useResetPasswordForm.test.tsx
++++ b/server/src/pages/hooks/useResetPasswordForm.test.tsx
+@@ -16,6 +16,8 @@ vi.mock(
+     useCallback: React.useCallback,
+     useMemo: React.useMemo,
+     useState: React.useState,
++    createContext: React.createContext,
++    useContext: React.useContext,
+   }),
+ )
+ 
+diff --git a/server/src/pages/hooks/useSignInForm.test.tsx b/server/src/pages/hooks/useSignInForm.test.tsx
+index 507665b554913e4302351de07c42aa9f2e8a89f9..240318bb67a34ad6955570a23efcf040310380cb 100644
+--- a/server/src/pages/hooks/useSignInForm.test.tsx
++++ b/server/src/pages/hooks/useSignInForm.test.tsx
+@@ -18,6 +18,8 @@ vi.mock(
+     useCallback: React.useCallback,
+     useMemo: React.useMemo,
+     useState: React.useState,
++    createContext: React.createContext,
++    useContext: React.useContext,
+   }),
+ )
+ 
+diff --git a/server/src/pages/hooks/useSignInForm.tsx b/server/src/pages/hooks/useSignInForm.tsx
+index 876442282ffd032dcf859367f9837b3efc98d8eb..662e9dcc1a195cd4730b96dd8502fe9b9fa54b2c 100644
+--- a/server/src/pages/hooks/useSignInForm.tsx
++++ b/server/src/pages/hooks/useSignInForm.tsx
+@@ -1,3 +1,4 @@
++import { useAuthRuntime } from 'pages/tools/authRuntime'
+ import {
+   useCallback, useMemo, useState,
+ } from 'hono/jsx'
+@@ -30,6 +31,7 @@ const useSignInForm = ({
+   onSwitchView,
+   usePasswordlessAsMagicLink = false,
+ }: UseSignInFormProps) => {
++  const runtime = useAuthRuntime()
+   const [email, setEmail] = useState('')
+   const [password, setPassword] = useState('')
+ 
+@@ -112,6 +114,7 @@ const useSignInForm = ({
+             response,
+             locale,
+             onSwitchView,
++            runtime,
+           )
+         })
+         .catch((error) => {
+@@ -181,6 +184,7 @@ const useSignInForm = ({
+             response,
+             locale,
+             onSwitchView,
++            runtime,
+           )
+         })
+         .catch((error) => {
+diff --git a/server/src/pages/hooks/useSignUpForm.test.tsx b/server/src/pages/hooks/useSignUpForm.test.tsx
+index 8bbca59dcc47f9d976156cd136c0e214227cfe36..cc072f0e08e25c1df1745f7ac5bbc668c11c09f9 100644
+--- a/server/src/pages/hooks/useSignUpForm.test.tsx
++++ b/server/src/pages/hooks/useSignUpForm.test.tsx
+@@ -21,6 +21,8 @@ vi.mock(
+     useCallback: React.useCallback,
+     useMemo: React.useMemo,
+     useState: React.useState,
++    createContext: React.createContext,
++    useContext: React.useContext,
+   }),
+ ) // used for handleAuthorizeStep
+ 
+diff --git a/server/src/pages/hooks/useSignUpForm.tsx b/server/src/pages/hooks/useSignUpForm.tsx
+index 9aaecfdae3b874958928ba0ce1d0316943072b6c..39251aed45c56e764991c3fbc32919ef542c2122 100644
+--- a/server/src/pages/hooks/useSignUpForm.tsx
++++ b/server/src/pages/hooks/useSignUpForm.tsx
+@@ -1,3 +1,4 @@
++import { useAuthRuntime } from 'pages/tools/authRuntime'
+ import {
+   useCallback, useMemo, useState,
+ } from 'hono/jsx'
+@@ -40,6 +41,7 @@ const useSignUpForm = ({
+   onSubmitError,
+   onSwitchView,
+ }: UseSignUpFormProps) => {
++  const runtime = useAuthRuntime()
+   const [isSubmitting, setIsSubmitting] = useState(false)
+ 
+   const [email, setEmail] = useState('')
+@@ -199,6 +201,7 @@ const useSignUpForm = ({
+             response,
+             locale,
+             onSwitchView,
++            runtime,
+           )
+         })
+         .catch((error) => {
+diff --git a/server/src/pages/hooks/useSmsMfaForm.test.tsx b/server/src/pages/hooks/useSmsMfaForm.test.tsx
+index f8269981cae58def603e12c6829f5bcf4dded659..7bb5785b0d4634647d605021836d5708b60c8ad6 100644
+--- a/server/src/pages/hooks/useSmsMfaForm.test.tsx
++++ b/server/src/pages/hooks/useSmsMfaForm.test.tsx
+@@ -20,6 +20,8 @@ vi.mock(
+     useCallback: React.useCallback,
+     useMemo: React.useMemo,
+     useState: React.useState,
++    createContext: React.createContext,
++    useContext: React.useContext,
+   }),
+ )
+ 
+@@ -426,6 +428,7 @@ describe(
+           { status: 'ok' },
+           dummyLocale,
+           onSwitchView,
++          null,
+         )
+         processFetchSpy.mockRestore()
+         handleAuthorizeSpy.mockRestore()
+diff --git a/server/src/pages/hooks/useSmsMfaForm.tsx b/server/src/pages/hooks/useSmsMfaForm.tsx
+index be5da5020ffb7705638a980544eb7c320c33402a..17790092008483f2daa0682072631811869caf14 100644
+--- a/server/src/pages/hooks/useSmsMfaForm.tsx
++++ b/server/src/pages/hooks/useSmsMfaForm.tsx
+@@ -1,3 +1,4 @@
++import { useAuthRuntime } from 'pages/tools/authRuntime'
+ import {
+   useCallback, useMemo, useState,
+ } from 'hono/jsx'
+@@ -31,8 +32,9 @@ const useSmsMfaForm = ({
+   onSubmitError,
+   onSwitchView,
+ }: UseSmsMfaFormProps) => {
++  const runtime = useAuthRuntime()
+   const followUpParams = useMemo(
+-    () => getFollowUpParams(),
++    () => getFollowUpParams(runtime),
+     [],
+   )
+   const qs = `?code=${followUpParams.code}&locale=${locale}&org=${followUpParams.org}`
+@@ -254,6 +256,7 @@ const useSmsMfaForm = ({
+               response,
+               locale,
+               onSwitchView,
++              runtime,
+             )
+           })
+           .catch((error) => {
+diff --git a/server/src/pages/hooks/useSocialSignIn.test.tsx b/server/src/pages/hooks/useSocialSignIn.test.tsx
+index acf1564b1684de4b4eb37ca7e1814f5723e3637e..e798e48bb14e63d4c4832fc962363a91a9a7dffa 100644
+--- a/server/src/pages/hooks/useSocialSignIn.test.tsx
++++ b/server/src/pages/hooks/useSocialSignIn.test.tsx
+@@ -21,6 +21,8 @@ vi.mock(
+     useCallback: React.useCallback,
+     useMemo: React.useMemo,
+     useState: React.useState,
++    createContext: React.createContext,
++    useContext: React.useContext,
+     useEffect: React.useEffect,
+   }),
+ )
+@@ -140,6 +142,7 @@ describe(
+           { status: 'ok' },
+           dummyLocale,
+           onSwitchView,
++          null,
+         )
+ 
+         fetchSpy.mockRestore()
+@@ -247,6 +250,7 @@ describe(
+           { status: 'ok' },
+           dummyLocale,
+           onSwitchView,
++          null,
+         )
+ 
+         fetchSpy.mockRestore()
+diff --git a/server/src/pages/hooks/useSocialSignIn.tsx b/server/src/pages/hooks/useSocialSignIn.tsx
+index 9abe624031f4857a725619faf4b3146cfdf97907..fe031845b38017df9e9823cc7e0357a5464bd39a 100644
+--- a/server/src/pages/hooks/useSocialSignIn.tsx
++++ b/server/src/pages/hooks/useSocialSignIn.tsx
+@@ -1,3 +1,4 @@
++import { useAuthRuntime } from 'pages/tools/authRuntime'
+ import {
+   useCallback, useEffect, useMemo,
+   useState,
+@@ -30,6 +31,7 @@ const useSocialSignIn = ({
+   onSwitchView,
+   oidcProviders,
+ }: UseSocialSignInProps) => {
++  const runtime = useAuthRuntime()
+   const [oidcConfigs, setOidcConfigs] = useState<OidcProviderConfig[]>([])
+   const [oidcCodeVerifier, setOidcCodeVerifier] = useState<string>('')
+ 
+@@ -60,6 +62,7 @@ const useSocialSignIn = ({
+             response,
+             locale,
+             onSwitchView,
++            runtime,
+           )
+         })
+         .catch((error) => {
+@@ -95,6 +98,7 @@ const useSocialSignIn = ({
+             response,
+             locale,
+             onSwitchView,
++            runtime,
+           )
+         })
+         .catch((error) => {
+diff --git a/server/src/pages/hooks/useSubmitError.test.tsx b/server/src/pages/hooks/useSubmitError.test.tsx
+index 2cb5b4c399a84e992081184f691c6c1688179aac..0a9fcbbf1d7fedbb6787ed42f8cbd944882089bf 100644
+--- a/server/src/pages/hooks/useSubmitError.test.tsx
++++ b/server/src/pages/hooks/useSubmitError.test.tsx
+@@ -21,6 +21,8 @@ vi.mock(
+   () => ({
+     useCallback: React.useCallback,
+     useState: React.useState,
++    createContext: React.createContext,
++    useContext: React.useContext,
+   }),
+ )
+ 
+diff --git a/server/src/pages/hooks/useSubmitError.tsx b/server/src/pages/hooks/useSubmitError.tsx
+index 20ce85b1e8c263b82ceb0f13e49932b01fd46be7..909256b866c7ff39921bc7ad87873a8abdb3dd2e 100644
+--- a/server/src/pages/hooks/useSubmitError.tsx
++++ b/server/src/pages/hooks/useSubmitError.tsx
+@@ -2,6 +2,7 @@ import {
+   useCallback, useState,
+ } from 'hono/jsx'
+ import { View } from '.'
++import { useAuthRuntime, navigateAuth } from 'pages/tools/authRuntime'
+ import {
+   messageConfig, typeConfig, routeConfig,
+ } from 'configs'
+@@ -16,10 +17,12 @@ const useSubmitError = ({
+   onSwitchView: (view: View) => void;
+   locale: typeConfig.Locale;
+ }) => {
++  const runtime = useAuthRuntime()
+   const [submitError, setSubmitError] = useState<string | null>(null)
+ 
+   const handleSubmitError = useCallback(
+     (error: any) => {
++      if (runtime && !runtime.active) return
+       if (error === null) {
+         setSubmitError(null)
+         return
+@@ -105,7 +108,7 @@ const useSubmitError = ({
+           msg = errorString
+         }
+       } else if (errorString.indexOf(messageConfig.RequestError.WrongAuthCode) !== -1) {
+-        const currentUrl = new URL(window.location.href)
++        const currentUrl = new URL(runtime?.url.href ?? window.location.href)
+         const newUrl = new URL(`${window.location.origin}${routeConfig.IdentityRoute.AuthCodeExpiredView}`)
+         newUrl.searchParams.set(
+           'locale',
+@@ -115,11 +118,7 @@ const useSubmitError = ({
+           'redirect_uri',
+           currentUrl.searchParams.get('redirect_uri') ?? '',
+         )
+-        window.history.pushState(
+-          {},
+-          '',
+-          newUrl,
+-        )
++        navigateAuth(newUrl, runtime)
+ 
+         onSwitchView(View.AuthCodeExpired)
+       }
+diff --git a/server/src/pages/hooks/useSwitchOrgForm.test.tsx b/server/src/pages/hooks/useSwitchOrgForm.test.tsx
+index a3eb3722c6f2a95a5158ab5b29a5f7e767854aad..7cdc8efe7220087ef6302aca8491dfda9c81ff3e 100644
+--- a/server/src/pages/hooks/useSwitchOrgForm.test.tsx
++++ b/server/src/pages/hooks/useSwitchOrgForm.test.tsx
+@@ -19,6 +19,8 @@ vi.mock(
+     useCallback: React.useCallback,
+     useMemo: React.useMemo,
+     useState: React.useState,
++    createContext: React.createContext,
++    useContext: React.useContext,
+   }),
+ )
+ 
+diff --git a/server/src/pages/hooks/useSwitchOrgForm.tsx b/server/src/pages/hooks/useSwitchOrgForm.tsx
+index ca045f6774dac22797ac2c071f5cd630897c6219..05e42efb9e517ae9c9f62b78752aa8dd71760792 100644
+--- a/server/src/pages/hooks/useSwitchOrgForm.tsx
++++ b/server/src/pages/hooks/useSwitchOrgForm.tsx
+@@ -1,3 +1,4 @@
++import { useAuthRuntime } from 'pages/tools/authRuntime'
+ import {
+   useCallback, useMemo, useState,
+ } from 'hono/jsx'
+@@ -24,8 +25,9 @@ const useSwitchOrgForm = ({
+   onSubmitError,
+   onSwitchView,
+ }: UseSwitchOrgFormProps) => {
++  const runtime = useAuthRuntime()
+   const followUpParams = useMemo(
+-    () => getFollowUpParams(),
++    () => getFollowUpParams(runtime),
+     [],
+   )
+ 
+@@ -61,6 +63,7 @@ const useSwitchOrgForm = ({
+             response,
+             locale,
+             onSwitchView,
++            runtime,
+           )
+         })
+         .catch((error) => {
+diff --git a/server/src/pages/hooks/useUpdateInfoForm.test.tsx b/server/src/pages/hooks/useUpdateInfoForm.test.tsx
+index 5d1edd971447f5a1f7b83738671359fe16fb79f3..5f3c0e249ad2017048aac760d55602bbd047f715 100644
+--- a/server/src/pages/hooks/useUpdateInfoForm.test.tsx
++++ b/server/src/pages/hooks/useUpdateInfoForm.test.tsx
+@@ -15,6 +15,8 @@ vi.mock(
+   'hono/jsx',
+   () => ({
+     useState: React.useState,
++    createContext: React.createContext,
++    useContext: React.useContext,
+     useMemo: React.useMemo,
+   }),
+ )
+diff --git a/server/src/pages/hooks/useUpdateInfoForm.tsx b/server/src/pages/hooks/useUpdateInfoForm.tsx
+index 7bbc559cb5a3b08043b712892f865c80da66c676..c168a683072c57aeb41c6eea861231e402bcec3f 100644
+--- a/server/src/pages/hooks/useUpdateInfoForm.tsx
++++ b/server/src/pages/hooks/useUpdateInfoForm.tsx
+@@ -1,3 +1,4 @@
++import { useAuthRuntime } from 'pages/tools/authRuntime'
+ import {
+   useState, useMemo,
+ } from 'hono/jsx'
+@@ -23,8 +24,9 @@ const useUpdateInfoForm = ({
+   locale,
+   onSubmitError,
+ }: UseUpdateInfoFormProps) => {
++  const runtime = useAuthRuntime()
+   const followUpParams = useMemo(
+-    () => getFollowUpParams(),
++    () => getFollowUpParams(runtime),
+     [],
+   )
+ 
+diff --git a/server/src/pages/hooks/useVerifyEmailForm.test.tsx b/server/src/pages/hooks/useVerifyEmailForm.test.tsx
+index bf0b04d947c20c5e8cdf43fe645ce1020a046499..1f6a4eb2d70758898a68615e0b10b277fab9b3af 100644
+--- a/server/src/pages/hooks/useVerifyEmailForm.test.tsx
++++ b/server/src/pages/hooks/useVerifyEmailForm.test.tsx
+@@ -15,6 +15,8 @@ vi.mock(
+     useCallback: React.useCallback,
+     useMemo: React.useMemo,
+     useState: React.useState,
++    createContext: React.createContext,
++    useContext: React.useContext,
+   }),
+ )
+ 
+diff --git a/server/src/pages/hooks/useVerifyEmailForm.tsx b/server/src/pages/hooks/useVerifyEmailForm.tsx
+index d6febde31df9ca0a5ef58946040ca3c02de44ad0..eebc470a8773ea787dc0cfa90197f44d8427333f 100644
+--- a/server/src/pages/hooks/useVerifyEmailForm.tsx
++++ b/server/src/pages/hooks/useVerifyEmailForm.tsx
+@@ -1,3 +1,4 @@
++import { useAuthRuntime } from 'pages/tools/authRuntime'
+ import {
+   useCallback, useMemo, useState,
+ } from 'hono/jsx'
+@@ -20,8 +21,9 @@ const useVerifyEmailForm = ({
+   locale,
+   onSubmitError,
+ }: UseVerifyEmailFormProps) => {
++  const runtime = useAuthRuntime()
+   const verifyEmailParams = useMemo(
+-    () => getVerifyEmailParams(),
++    () => getVerifyEmailParams(runtime),
+     [],
+   )
+ 
+diff --git a/server/src/pages/tools/authRuntime.ts b/server/src/pages/tools/authRuntime.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..ff80455474ba68202606e985bf5d599924b2363b
+--- /dev/null
++++ b/server/src/pages/tools/authRuntime.ts
+@@ -0,0 +1,20 @@
++import { createContext, useContext } from 'hono/jsx'
++
++// An embedded flow owns its URL and lifetime; late responses must not escape it.
++export interface AuthRuntime {
++  url: URL;
++  initialProps: Record<string, unknown>;
++  active: boolean;
++  complete: (url: string) => void;
++}
++
++export const AuthRuntimeContext = createContext<AuthRuntime | null>(null)
++export const useAuthRuntime = () => useContext(AuthRuntimeContext)
++
++export function navigateAuth(url: URL, runtime: AuthRuntime | null = null) {
++  if (runtime) {
++    if (runtime.active) runtime.url = url
++  } else {
++    window.history.pushState({}, '', url)
++  }
++}
+diff --git a/server/src/pages/tools/param.ts b/server/src/pages/tools/param.ts
+index a7f80c7efa509566be3c511a853b4b91dbd4b0d6..7f2ee5e6a6eb37164226a5cbac029bb1adb263be 100644
+--- a/server/src/pages/tools/param.ts
++++ b/server/src/pages/tools/param.ts
+@@ -1,10 +1,11 @@
+ import { parse } from 'qs'
+ import { typeConfig } from 'configs'
+ import { Policy } from 'dtos/oauth'
++import { AuthRuntime } from './authRuntime'
+ 
+-export const getLocaleFromParams = () => {
++export const getLocaleFromParams = (runtime: AuthRuntime | null = null) => {
+   const params = parse(
+-    window.location.search,
++    runtime?.url.search ?? window.location.search,
+     { ignoreQueryPrefix: true },
+   )
+ 
+@@ -23,9 +24,9 @@ export const parseRedirectUri = (redirectUri: unknown): string => {
+   }
+ }
+ 
+-export const getStepFromParams = () => {
++export const getStepFromParams = (runtime: AuthRuntime | null = null) => {
+   const params = parse(
+-    window.location.search,
++    runtime?.url.search ?? window.location.search,
+     { ignoreQueryPrefix: true },
+   )
+ 
+@@ -45,9 +46,9 @@ export interface AuthorizeParams {
+   scope: string;
+ }
+ 
+-export const getAuthorizeParams = (): AuthorizeParams => {
++export const getAuthorizeParams = (runtime: AuthRuntime | null = null): AuthorizeParams => {
+   const params = parse(
+-    window.location.search,
++    runtime?.url.search ?? window.location.search,
+     { ignoreQueryPrefix: true },
+   )
+ 
+@@ -72,9 +73,9 @@ export interface FollowUpParams {
+   org: string;
+ }
+ 
+-export const getFollowUpParams = (): FollowUpParams => {
++export const getFollowUpParams = (runtime: AuthRuntime | null = null): FollowUpParams => {
+   const params = parse(
+-    window.location.search,
++    runtime?.url.search ?? window.location.search,
+     { ignoreQueryPrefix: true },
+   )
+ 
+@@ -91,9 +92,9 @@ export interface AuthCodeExpiredParams {
+   redirectUri: string;
+ }
+ 
+-export const getAuthCodeExpiredParams = (): AuthCodeExpiredParams => {
++export const getAuthCodeExpiredParams = (runtime: AuthRuntime | null = null): AuthCodeExpiredParams => {
+   const params = parse(
+-    window.location.search,
++    runtime?.url.search ?? window.location.search,
+     { ignoreQueryPrefix: true },
+   )
+ 
+@@ -110,9 +111,9 @@ export interface MagicSignInParams {
+   org: string;
+ }
+ 
+-export const getMagicSignInParams = (): MagicSignInParams => {
++export const getMagicSignInParams = (runtime: AuthRuntime | null = null): MagicSignInParams => {
+   const params = parse(
+-    window.location.search,
++    runtime?.url.search ?? window.location.search,
+     { ignoreQueryPrefix: true },
+   )
+ 
+@@ -130,9 +131,9 @@ export interface VerifyEmailParams {
+   org: string;
+ }
+ 
+-export const getVerifyEmailParams = (): VerifyEmailParams => {
++export const getVerifyEmailParams = (runtime: AuthRuntime | null = null): VerifyEmailParams => {
+   const params = parse(
+-    window.location.search,
++    runtime?.url.search ?? window.location.search,
+     { ignoreQueryPrefix: true },
+   )
+ 
+@@ -149,9 +150,9 @@ export interface InvitationParams {
+   signinUrl: string;
+ }
+ 
+-export const getInvitationParams = (): InvitationParams => {
++export const getInvitationParams = (runtime: AuthRuntime | null = null): InvitationParams => {
+   const params = parse(
+-    window.location.search,
++    runtime?.url.search ?? window.location.search,
+     { ignoreQueryPrefix: true },
+   )
+ 
+diff --git a/server/src/pages/tools/request.ts b/server/src/pages/tools/request.ts
+index 6a84df93702cf6ecd119cd06a69b5f4d9a89d230..f2917d390f3fe9c8a39a09162a05b22daa1aaf06 100644
+--- a/server/src/pages/tools/request.ts
++++ b/server/src/pages/tools/request.ts
+@@ -2,6 +2,7 @@ import {
+   FollowUpParams, AuthorizeParams, parseRedirectUri,
+ } from './param'
+ import { View } from 'pages/hooks'
++import { AuthRuntime, navigateAuth } from './authRuntime'
+ import {
+   routeConfig, typeConfig,
+ } from 'configs'
+@@ -46,7 +47,9 @@ export const handleAuthorizeStep = (
+   data: any,
+   locale: typeConfig.Locale,
+   onSwitchView: (view: View) => void,
++  runtime: AuthRuntime | null = null,
+ ) => {
++  if (runtime && !runtime.active) return
+   if (data.nextPage) {
+     const step = data.nextPage
+     if (data.code && data.state && data.redirectUri) {
+@@ -75,18 +78,20 @@ export const handleAuthorizeStep = (
+         'step',
+         step,
+       )
+-      window.history.pushState(
+-        {},
+-        '',
+-        newUrl,
+-      )
++      navigateAuth(newUrl, runtime)
+     }
+     onSwitchView(step)
+   } else {
+     const redirectUri = parseRedirectUri(data.redirectUri)
+     if (!redirectUri) return
+ 
+-    if (window.opener) {
++    if (runtime) {
++      const url = new URL(redirectUri)
++      url.searchParams.set('state', data.state)
++      url.searchParams.set('code', data.code)
++      url.searchParams.set('locale', locale)
++      runtime.complete(url.href)
++    } else if (window.opener) {
+       window.opener.postMessage(
+         {
+           state: data.state,
+diff --git a/server/src/pages/views/AuthCodeExpired.tsx b/server/src/pages/views/AuthCodeExpired.tsx
+index 3de5f5d80b0213dce101f2902e275ad5e4b88367..9bb731187271110c2446281e6aac7083a1348216 100644
+--- a/server/src/pages/views/AuthCodeExpired.tsx
++++ b/server/src/pages/views/AuthCodeExpired.tsx
+@@ -1,3 +1,4 @@
++import { useAuthRuntime } from 'pages/tools/authRuntime'
+ import { typeConfig } from 'configs'
+ import { getAuthCodeExpiredParams } from 'pages/tools/param'
+ import { AuthCodeExpired as AuthCodeExpiredBlock } from 'pages/blocks'
+@@ -5,7 +6,8 @@ import { AuthCodeExpired as AuthCodeExpiredBlock } from 'pages/blocks'
+ const AuthCodeExpired = ({ locale }: {
+   locale: typeConfig.Locale;
+ }) => {
+-  const authCodeExpiredParams = getAuthCodeExpiredParams()
++  const runtime = useAuthRuntime()
++  const authCodeExpiredParams = getAuthCodeExpiredParams(runtime)
+ 
+   return (
+     <AuthCodeExpiredBlock
+diff --git a/server/src/pages/views/RecoveryCodeSignIn.tsx b/server/src/pages/views/RecoveryCodeSignIn.tsx
+index 57a5b73944f77be02a2d7b7fb783abd36c97b77c..797f02e350456a62fa393c5817e7c16f8c4e1d8a 100644
+--- a/server/src/pages/views/RecoveryCodeSignIn.tsx
++++ b/server/src/pages/views/RecoveryCodeSignIn.tsx
+@@ -1,3 +1,4 @@
++import { useAuthRuntime } from 'pages/tools/authRuntime'
+ import { typeConfig } from 'configs'
+ import {
+   useSubmitError, View, useRecoveryCodeForm,
+@@ -14,7 +15,8 @@ const RecoveryCodeSignIn = ({
+   locale,
+   onSwitchView,
+ }: RecoveryCodeSignInProps) => {
+-  const params = getAuthorizeParams()
++  const runtime = useAuthRuntime()
++  const params = getAuthorizeParams(runtime)
+ 
+   const {
+     submitError, handleSubmitError,
+diff --git a/server/src/pages/views/SignIn.tsx b/server/src/pages/views/SignIn.tsx
+index c795d89192ead52cf91eee81da6d9b08625d7bd5..91d6a613c26c0103de1d5f4cc84cd6223c3cee50 100644
+--- a/server/src/pages/views/SignIn.tsx
++++ b/server/src/pages/views/SignIn.tsx
+@@ -1,3 +1,4 @@
++import { useAuthRuntime } from 'pages/tools/authRuntime'
+ import { typeConfig } from 'configs'
+ import {
+   View, useSubmitError, useSignInForm,
+@@ -16,8 +17,9 @@ const SignIn = ({
+   locale,
+   onSwitchView,
+ }: PasswordViewProps) => {
++  const runtime = useAuthRuntime()
+   const { initialProps } = useInitialProps()
+-  const params = getAuthorizeParams()
++  const params = getAuthorizeParams(runtime)
+ 
+   const {
+     submitError, handleSubmitError,
+diff --git a/server/src/pages/views/SignUp.tsx b/server/src/pages/views/SignUp.tsx
+index 1d4ef43c18ffbf2baeff245aa93c3b37b76465a0..175ba55cfcf1ccfcb068b4ceaf25297bade3a862 100644
+--- a/server/src/pages/views/SignUp.tsx
++++ b/server/src/pages/views/SignUp.tsx
+@@ -1,3 +1,4 @@
++import { useAuthRuntime } from 'pages/tools/authRuntime'
+ import { useEffect } from 'hono/jsx'
+ import { typeConfig } from 'configs'
+ import {
+@@ -16,8 +17,9 @@ const SignUp = ({
+   locale,
+   onSwitchView,
+ }: SignUpProps) => {
++  const runtime = useAuthRuntime()
+   const { initialProps } = useInitialProps()
+-  const params = getAuthorizeParams()
++  const params = getAuthorizeParams(runtime)
+ 
+   const {
+     submitError, handleSubmitError,
