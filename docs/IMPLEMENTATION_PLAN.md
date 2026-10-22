@@ -27,15 +27,15 @@
 - 业务提交 `0ea7490805cb7916dfe20dcc1e0dbd97dc74e410` 与后台补充
   `ce98fe8ce513f9c65f19330567251cc8fc19504a`；导出十项补丁，随后正式发布 3.2.5。
   Server-Timing 只有 app/session-key/email-provider 与数字，不含用户、code、secret、provider 正文。
-  主仓库完整 110 项测试、补丁 verify 和 diff check 通过；尚未执行生产更新。
+  主仓库完整 110 项测试、补丁 verify 和 diff check 通过；该本地验证阶段尚未执行生产更新。
 - 本地回归不等于真实验证码送达或线上登录性能验收；真实邮箱、短信、外部 OAuth 本轮尚未验。
   用户已批准最多 24 小时、绑定本实例与固定 SHA 的机器更新/结果查询/独立 verify；
   SpringBok 旧机制不支持现代 connected 更新，授权的最小兼容修复另以 SV-11 验证。
 - 首轮 PR #19 后，后台补充 PR #20 精确 head 两项检查通过，正常合并后的 main 检查通过；
   v3.2.5 正式发布并固定 `1f89e44fcc9d0659074a71c05da8423fcd26a747`，远程标签 SHA 已核对。
   SpringBok 兼容控制面已上线，真实 scoped session 与原 D1/KV、Workers、域名保留计划通过。
-  唯一一次更新提交遇网络中断，后续 state 409 且暂未见对应 run；这是提交结果未确认，
-  不是成功回执，也不能推断为确定未提交。没有重发或另建更新任务，专用机器 token 已禁用。
+  首轮唯一一次更新提交遇网络中断，后续 state 409 且暂未见对应 run；当时为提交结果未确认，
+  不是成功回执，也不能推断为确定未提交。当时没有重发或另建更新任务，专用机器 token 已禁用。
   该停点不能称 3.2.5 已部署；原计划、一次性 marker 与只读证据保留在上述临时目录。
 - 用户另行批准精确中断任务的未派发取消栅栏。SpringBok PR #103 正常合并、精确 main CI
   通过并上线后，原任务的 vault/Connected 双侧 fence 真实完成并独立回读；只有确认无
