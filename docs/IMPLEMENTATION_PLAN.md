@@ -1,14 +1,15 @@
 # 初始工程落地范围
 
-## NA-13：认证、个人中心及后台请求延迟（进行中，2026-10-23）
+## NA-13：认证、个人中心及后台请求延迟（3.2.5 已上线并独立验证，2026-10-23）
 
 负责人：主 AI。用户授权定位验证码发送、登录和页面切换缓慢，修复后通过 SpringBok
 更新现有实例。本子任务只处理已证实的无用 session 工作、请求内重复身份查询及应用列表
 逐项串行查询，并增加不含用户、密钥、验证码或 provider 正文的耗时证据。不跨请求缓存
 账号、权限或安全版本，不降低 MFA/撤销/限流，不重建资源或初始化账号。
 测试、测量与发布回执保存在 `linshi/naccount-na13-performance-20261022/`。
-当前线上只读核对仍为 2026-10-10 的认证/后台 Worker；正式更新尚未完成，邮件 provider
-接受与最终送达必须分开验证。原更新的 unknown 历史不改写、不重放。
+当前认证/后台 Worker 已更新到固定 3.2.5，云端配置/数据资源保留与独立可用性验证通过。
+邮件 provider 接受与最终送达必须分开验证；真实收件/账户登录性能仍待业务验收。
+原更新的 unknown 历史不改写、不重放。
 
 - 移除 token/proof-only 路径的无用 session KV 和 cookie 工作；最终认证、SSO authorize、
   logout 及未审阅的新身份路径保留 session。真实加密 cookie 跨无状态 view 的往返已回归。
@@ -24,12 +25,38 @@
   首轮完整套件缺 SAML 测试证书，补临时一天自签证书后重跑；新增 cookie 测试起初错误地
   只取首个 Set-Cookie，现按浏览器语义取最后一次持久化 cookie 并通过，不改产品 cookie 行为。
 - 业务提交 `0ea7490805cb7916dfe20dcc1e0dbd97dc74e410` 与后台补充
-  `ce98fe8ce513f9c65f19330567251cc8fc19504a`；导出十项补丁，拟发布 3.2.5。
+  `ce98fe8ce513f9c65f19330567251cc8fc19504a`；导出十项补丁，随后正式发布 3.2.5。
   Server-Timing 只有 app/session-key/email-provider 与数字，不含用户、code、secret、provider 正文。
-  主仓库完整 110 项测试、补丁 verify 和 diff check 通过；尚未执行生产更新。
+  主仓库完整 110 项测试、补丁 verify 和 diff check 通过；该本地验证阶段尚未执行生产更新。
 - 本地回归不等于真实验证码送达或线上登录性能验收；真实邮箱、短信、外部 OAuth 本轮尚未验。
   用户已批准最多 24 小时、绑定本实例与固定 SHA 的机器更新/结果查询/独立 verify；
   SpringBok 旧机制不支持现代 connected 更新，授权的最小兼容修复另以 SV-11 验证。
+- 首轮 PR #19 后，后台补充 PR #20 精确 head 两项检查通过，正常合并后的 main 检查通过；
+  v3.2.5 正式发布并固定 `1f89e44fcc9d0659074a71c05da8423fcd26a747`，远程标签 SHA 已核对。
+  SpringBok 兼容控制面已上线，真实 scoped session 与原 D1/KV、Workers、域名保留计划通过。
+  首轮唯一一次更新提交遇网络中断，后续 state 409 且暂未见对应 run；当时为提交结果未确认，
+  不是成功回执，也不能推断为确定未提交。当时没有重发或另建更新任务，专用机器 token 已禁用。
+  该停点不能称 3.2.5 已部署；原计划、一次性 marker 与只读证据保留在上述临时目录。
+- 用户另行批准精确中断任务的未派发取消栅栏。SpringBok PR #103 正常合并、精确 main CI
+  通过并上线后，原任务的 vault/Connected 双侧 fence 真实完成并独立回读；只有确认无
+  reservation/bootstrap 才重新预览，未删除 marker、迁移 head、释放旧锁或盲目重放。
+- 原实例唯一新更新 `dc-26a817db585145d8bdacac1882c1607f` / run `39823532120`，
+  已下载 artifact 并核 ZIP SHA-256、task 与固定 3.2.5 source；业务回执 deployed-unverified，
+  backup-created/data-preserved/OIDC/JWKS/admin HTTP 五项全通过。随后独立 verify
+  `dc-123d1756fbca45f1a63a334a1ef31c0d` / run `39824371418` 返回 succeeded，三探针全通过。
+  不改写原 update 的 deployed-unverified 状态，也不追认历史 unknown。
+- 云端独立回读认证与后台均为新 Worker version，全部原 bindings、运行配置、D1/KV 与域名
+  保持不变。专用机器 token 已禁用，独立回读 disabled、到期时间不延长；等待 Access
+  传播后，无 Cookie 的负向请求 302 到组织登录，原 owner 邮箱 policies 不变。
+- 更新前后各 24 个匿名请求全部 200；直连每路四样本总耗时中位数 account/config/discovery
+  约 1991/1713/1865ms → 1790/1381/1492ms。新版 account/discovery 的 app 耗时为计时
+  分辨率内的 0.0ms，config 为 16–116ms；网络/TLS 占比仍高，代理路线也并非全数改善。
+  小样本不是因果或真实登录/邮件送达证明；验证码 provider/最终收件、短信和外部 OAuth
+  本轮尚未进行真实业务验收，不开启 EMAIL_LOG，不输出用户资料或邮件内容。
+- 隔离的真实 Chrome 匿名检查已打开线上个人中心，完成登录→创建账户→返回登录→
+  重置密码及关闭弹窗/切换应用管理；没有填写账号、提交表单或发送邮件，账号路径保持。
+  截图 `na13-live-reset.png` 已检查；浏览器唯一控制台资源错误是 favicon.ico 404，
+  不将本次匿名交互写成真实账户登录或收件性能验收。已关闭本轮专用浏览器会话。
 
 ## NA-12：用户中心内认证弹窗（3.2.4 已上线，2026-10-10 UTC）
 
