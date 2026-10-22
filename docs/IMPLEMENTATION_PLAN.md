@@ -1,6 +1,6 @@
 # 初始工程落地范围
 
-## NA-13：认证与个人中心请求延迟（进行中，2026-10-22）
+## NA-13：认证、个人中心及后台请求延迟（进行中，2026-10-23）
 
 负责人：主 AI。用户授权定位验证码发送、登录和页面切换缓慢，修复后通过 SpringBok
 更新现有实例。本子任务只处理已证实的无用 session 工作、请求内重复身份查询及应用列表
@@ -12,15 +12,19 @@
 
 - 移除 token/proof-only 路径的无用 session KV 和 cookie 工作；最终认证、SSO authorize、
   logout 及未审阅的新身份路径保留 session。真实加密 cookie 跨无状态 view 的往返已回归。
+- 后台 bearer-only `/api/v1/*` 和 `/info` 同样不再执行无用 SSO 工作；无 bearer 的真实
+  user API 仍返回 401。没有增加跨请求 JWKS 缓存，不扩展密钥撤销或权限失效窗口。
 - profile 从原先 2 KV + 4 D1 串行链减少为 1 KV + 3 D1；本请求验证用户复用，下一请求
   仍读数据库。停用、删除和 securityVersion 变化立即拒绝，不引入跨请求权限缓存。
 - 100 项公开应用目录合并为一条参数化 JSON join，整个 apps 请求只有用户、portal client、
   catalog 三条 D1 语句；保留 consent 用户隔离、类型/停用过滤、去重和公开目录次序。
-- 首轮改动前路径预算 17 项中 12 项失败；修复后完整 CF 测试 3,132/3,132 通过，
-  `full-cf-release.json` success=true/exit=0。TypeScript 与客户端/Worker 构建通过。
+- 首轮改动前路径预算 17 项中 12 项失败；含后台补充的完整 CF 测试 3,138/3,138 通过，
+  `full-admin-release.json` success=true/exit=0。最新 TypeScript 与 Worker 构建通过；
+  客户端构建亦通过，后台补充没有修改客户端源码。
   首轮完整套件缺 SAML 测试证书，补临时一天自签证书后重跑；新增 cookie 测试起初错误地
   只取首个 Set-Cookie，现按浏览器语义取最后一次持久化 cookie 并通过，不改产品 cookie 行为。
-- 业务提交 `0ea7490805cb7916dfe20dcc1e0dbd97dc74e410`；导出九项补丁，拟发布 3.2.5。
+- 业务提交 `0ea7490805cb7916dfe20dcc1e0dbd97dc74e410` 与后台补充
+  `ce98fe8ce513f9c65f19330567251cc8fc19504a`；导出十项补丁，拟发布 3.2.5。
   Server-Timing 只有 app/session-key/email-provider 与数字，不含用户、code、secret、provider 正文。
   主仓库完整 110 项测试、补丁 verify 和 diff check 通过；尚未执行生产更新。
 - 本地回归不等于真实验证码送达或线上登录性能验收；真实邮箱、短信、外部 OAuth 本轮尚未验。
