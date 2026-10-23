@@ -1,5 +1,69 @@
 # 初始工程落地范围
 
+## NA-16：统一托管登录面板与请求等待优化（3.2.8 发布进行中，2026-10-24）
+
+用户授权审视当前账号系统、优先改善访问慢的问题并提供其他应用共用的登录面板。
+本轮基于外层 `7405fbe8`、定制 `471ca790` 的干净工作区，不回退 NA-13/14/15。
+开发阶段只修改本地源码、测试及接入文档，没有操作现有用户。用户随后明确授权提交、推送并使用 SpringBok 更新部署。
+测试/构建/浏览器证据位于 `linshi/naccount-unified-login-20261024/`。
+
+### 已落实的改动
+
+- `/login` 复用完整的 authorize/client/redirect/S256 PKCE/scopes/SSO/policy 验证与既有 `Main`，
+  无会话时同请求直接返回面板；旧 OIDC authorize 保留原 302 合同。统一展示数据库应用名称、
+  已登记回调的 origin 和 NAccount 文字品牌。`screen=signup/reset` 受真实能力开关限制，
+  不将 UI 切换当成认证成功、不跳过 MFA 或 consent。详见 [统一登录接入](UNIFIED_LOGIN.md)。
+- 同次 Access/ID Token 签名共用 Context 内 Promise，private/public KV 各一次，私钥导入与
+  public JWK 转换各一次；并行首次 key 读取。下一请求重新读取，不新增跨请求缓存或权限窗口。
+- current/deprecated JWKS 读取并行，保 current-first 与缺当前 key 的失败关闭；process、
+  verify-email、expired 页复用已解析 branding。默认 system-ui 消除 Google 字体 stylesheet
+  依赖；组织显式自定义字体保留。认证 HTML no-store/no-referrer。
+- SSO 直接返回与普通页面完成改用 URL 参数合并，保留回调已有 query 并正确编码 state。
+  独立页面使用服务端已经协商的 HTML 语言，避免无 locale/无效 locale 时客户端显示错误语言或空文案；
+  账号中心弹窗仍使用自身 runtime 的语言，不继承宿主页面。
+
+### 线上只读观察与边界
+
+北京时间 2026-10-24 00:45，通过无 Cookie、无凭证的独立 curl GET 对 account、config、
+discovery、JWKS 各取两次，共 8 次 HTTP 200。总耗时 1.54–3.77 秒，TLS 完成累计时间
+约 0.73–3.47 秒；account/discovery 的 app duration 为计时分辨率内 0ms，config 为
+637/33ms，JWKS 为 297/311ms。原始数据 `live-readonly/samples.json`，没有保存响应正文。
+这是当前线上基线，不是本轮修改的上线效果、浏览器连接复用结果或总体 p95；网络/TLS
+等待不能靠减少数据库查询完全消除。没有更改 DNS、代理、Cloudflare 访问策略或 provider。
+
+### 验证与发布边界
+
+最终验证结果：
+
+- 15 文件 209 项聚焦测试通过；完整 CF 套件 155 文件 **3,192/3,192**，独立 key-rotate
+  套件 **3/3**。实际路由测试证明 Access/ID Token 同次兑换各只读一次 public/private key，
+  两 token 均验签成功；并行/串行共用、下一请求换 key、加载失败、SSO 真实加密 Cookie、
+  被撤销 session、坏 client/redirect/PKCE、应用停用、appName 注入与回调 query/state 均有回归。
+- 最终 TypeScript、Vite client/Worker 双构建通过；两仓 diff check、UTF-8 无 BOM 和业务源码
+  与测试副本逐字节一致检查通过。没有执行 PostgreSQL 全套或更新管理后台依赖。
+- 真实 Chrome 打开经 Hono 生成的合成应用 HTML 和生产构建客户端，检查登录→注册→返回→
+  重置、1280/320px、88 字应用名称、内部滚动与键盘焦点。320px 下 document/body 宽度均
+  320px；无 locale 时沿用 HTML 的中文，screen=signup 直达；网络只有本地 JS/CSS/favicon，
+  无远端字体请求。未提交凭据或写业务数据。静态测试 helper 为 favicon 返回 204，不能以
+  本地零 console error 声称生产 favicon 404 已修复。专用浏览器和本地 helper 均已关闭。
+- 根仓库最终完整 **110/110** 通过。首次有一项 `Source tree differs from lock`，随后单项
+  及两次完整复验未复现，根因未证实；第二次复验因测试目录过深报 `Filename too long`，
+  改用 `linshi/na-r24` 后完整通过。未改产品校验或全局 Git 配置，原日志及失败 fixture 保留。
+
+中间失败也保留：新增 redirectUris 夹具一度误用 JSON，已按当前逗号分隔存储修正；旧 JWT
+测试使用只有 env 的对象冒充 Context，已换成真实 Hono Context，不在产品中放宽缓存/撤销校验。
+语言测试改用实际支持的 fr，另有无效语言回退回归；旧 deprecated-key S2S 夹具补上现行
+`tokenType=service` 合同并显式断言 200，未把 service 假装成用户或修改生产鉴权。
+
+证据为 `full-tests.json`、`rotation-tests.json`、`focused-verified.json`、`typecheck-verified.log`、
+`build-verified.log`、`root-tests-final.log`、`browser-summary.json` 和 `source-verification.json`；
+首次/第二次失败日志另存，不以最终通过覆盖历史失败。
+
+发布按既有 topic 定制提交、export/verify、精确 head CI、正常合并、固定 SHA/3.2.8 release、
+SpringBok 原实例 update 和独立 verify 推进。官方 upstream 保持只读，不创建平行生产实例；
+旧 generation 保留，不新增数据库迁移或改动 provider/账号/密钥/域名。具体发布与生产回执随后补记。
+本轮没有真实发邮件、短信、外部 OAuth、线上账号变更或并发压测，不声称已解决全部投递或网络延迟。
+
 ## NA-15：全界面主题增量发布（已上线并独立验证，2026-10-23）
 
 负责人主 AI。用户已明确授权提交推送及 SpringBok 升级；基于外层 `33d3943` 和定制

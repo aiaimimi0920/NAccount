@@ -1,0 +1,904 @@
+From eaa8557390f6ba6d54e5a7cda27b27c1593e17a7 Mon Sep 17 00:00:00 2001
+From: aiaimimi0920 <153103332+aiaimimi0920@users.noreply.github.com>
+Date: Fri, 9 Oct 2026 11:48:02 -0700
+Subject: [PATCH] feat(NA-09): bind Google and GitHub identities to user portal
+ accounts
+
+NAccount-Patch-Topic: user-portal
+---
+ ...0261009100000_naccount_social_identity.cjs |  15 ++
+ .../sqlite/0047_naccount_social_identity.sql  |  39 ++++
+ .../sqlite/0048_naccount_user_portal.sql      |   5 +
+ .../__tests__/normal/account-social.test.ts   | 152 ++++++++++++++++
+ .../normal/social-google-proof.test.ts        |  37 ++++
+ server/src/configs/type.ts                    |   1 +
+ server/src/handlers/identity/social.ts        |   2 +
+ server/src/models/socialIdentity.ts           |  56 ++++++
+ server/src/pages/account/Account.test.tsx     |   3 +-
+ server/src/pages/account/Account.tsx          |   7 +
+ .../src/pages/account/SocialAccounts.test.tsx |  51 ++++++
+ server/src/pages/account/SocialAccounts.tsx   |  67 +++++++
+ server/src/router.tsx                         |   3 +-
+ server/src/routes/account.test.ts             |   7 +-
+ server/src/routes/account.tsx                 |  12 ++
+ server/src/services/accountSocial.ts          | 168 ++++++++++++++++++
+ server/src/services/jwt.ts                    |   9 +-
+ server/src/services/user.ts                   |   6 +
+ 18 files changed, 635 insertions(+), 5 deletions(-)
+ create mode 100644 server/migrations/pg/20261009100000_naccount_social_identity.cjs
+ create mode 100644 server/migrations/sqlite/0047_naccount_social_identity.sql
+ create mode 100644 server/migrations/sqlite/0048_naccount_user_portal.sql
+ create mode 100644 server/src/__tests__/normal/account-social.test.ts
+ create mode 100644 server/src/__tests__/normal/social-google-proof.test.ts
+ create mode 100644 server/src/models/socialIdentity.ts
+ create mode 100644 server/src/pages/account/SocialAccounts.test.tsx
+ create mode 100644 server/src/pages/account/SocialAccounts.tsx
+ create mode 100644 server/src/services/accountSocial.ts
+
+diff --git a/server/migrations/pg/20261009100000_naccount_social_identity.cjs b/server/migrations/pg/20261009100000_naccount_social_identity.cjs
+new file mode 100644
+index 0000000000000000000000000000000000000000..fe4bc5cfe72d99c066c0908589df00b6abf92036
+--- /dev/null
++++ b/server/migrations/pg/20261009100000_naccount_social_identity.cjs
+@@ -0,0 +1,15 @@
++// Read-compatible schema. NAccount self-service binding is currently D1-only.
++exports.up = async function (knex) {
++  await knex.schema.createTable('naccount_social_identity', (table) => {
++    table.string('provider').notNullable()
++    table.string('subject').notNullable()
++    table.integer('userId').notNullable().references('id').inTable('user')
++    table.string('label').notNullable()
++    table.timestamp('createdAt').notNullable().defaultTo(knex.fn.now())
++    table.primary(['provider', 'subject'])
++    table.unique(['userId', 'provider'])
++  })
++}
++exports.down = async function (knex) {
++  await knex.schema.dropTable('naccount_social_identity')
++}
+diff --git a/server/migrations/sqlite/0047_naccount_social_identity.sql b/server/migrations/sqlite/0047_naccount_social_identity.sql
+new file mode 100644
+index 0000000000000000000000000000000000000000..8967a95333bf43f9a4a8626ced1f5baf4d3b9a4d
+--- /dev/null
++++ b/server/migrations/sqlite/0047_naccount_social_identity.sql
+@@ -0,0 +1,39 @@
++CREATE TABLE naccount_social_identity (
++  provider TEXT NOT NULL CHECK (provider IN ('Google', 'GitHub')),
++  subject TEXT NOT NULL,
++  userId INTEGER NOT NULL REFERENCES user(id),
++  label TEXT NOT NULL,
++  createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
++  PRIMARY KEY (provider, subject),
++  UNIQUE (userId, provider)
++);
++
++CREATE TABLE naccount_link_request (
++  state TEXT PRIMARY KEY,
++  provider TEXT NOT NULL CHECK (provider IN ('Google', 'GitHub')),
++  userId INTEGER NOT NULL REFERENCES user(id),
++  clientId TEXT NOT NULL,
++  passwordFingerprint TEXT NOT NULL,
++  browserHash TEXT NOT NULL,
++  verifier TEXT NOT NULL,
++  nonce TEXT NOT NULL,
++  expiresAt INTEGER NOT NULL
++);
++CREATE INDEX naccount_link_expiry ON naccount_link_request(expiresAt);
++
++-- Abort migration on ambiguous legacy ownership instead of merging accounts or choosing a winner.
++CREATE UNIQUE INDEX naccount_primary_social_unique ON user(socialAccountType, CAST(socialAccountId AS TEXT))
++WHERE socialAccountType IN ('Google', 'GitHub') AND socialAccountId IS NOT NULL;
++
++-- Enforce ownership across new bindings and legacy primary social accounts, including tombstones.
++CREATE TRIGGER naccount_identity_owner BEFORE INSERT ON naccount_social_identity
++WHEN EXISTS (SELECT 1 FROM user WHERE socialAccountType=NEW.provider AND CAST(socialAccountId AS TEXT)=NEW.subject)
++BEGIN SELECT RAISE(ABORT, 'NACCOUNT_IDENTITY_CONFLICT'); END;
++
++CREATE TRIGGER naccount_primary_identity_insert BEFORE INSERT ON user
++WHEN EXISTS (SELECT 1 FROM naccount_social_identity WHERE provider=NEW.socialAccountType AND subject=CAST(NEW.socialAccountId AS TEXT))
++BEGIN SELECT RAISE(ABORT, 'NACCOUNT_IDENTITY_CONFLICT'); END;
++
++CREATE TRIGGER naccount_primary_identity_update BEFORE UPDATE OF socialAccountType,socialAccountId ON user
++WHEN EXISTS (SELECT 1 FROM naccount_social_identity WHERE provider=NEW.socialAccountType AND subject=CAST(NEW.socialAccountId AS TEXT))
++BEGIN SELECT RAISE(ABORT, 'NACCOUNT_IDENTITY_CONFLICT'); END;
+diff --git a/server/migrations/sqlite/0048_naccount_user_portal.sql b/server/migrations/sqlite/0048_naccount_user_portal.sql
+new file mode 100644
+index 0000000000000000000000000000000000000000..116756ebac6f2d103c64b6d581b1f25377a81790
+--- /dev/null
++++ b/server/migrations/sqlite/0048_naccount_user_portal.sql
+@@ -0,0 +1,5 @@
++-- A declared public client identity, independent of administrator clients. SBA sets its exact callback.
++INSERT INTO app(name,type,clientId,redirectUris) VALUES('NAccount User Portal (SPA)','spa','naccount-user-portal','');
++INSERT INTO app_scope(appId,scopeId)
++SELECT app.id,scope.id FROM app CROSS JOIN scope
++WHERE app.clientId='naccount-user-portal' AND scope.name IN ('openid','profile','offline_access') AND scope.type='spa' AND scope.deletedAt IS NULL;
+diff --git a/server/src/__tests__/normal/account-social.test.ts b/server/src/__tests__/normal/account-social.test.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..55da9b3be8f2febe7834325ec2752eec74263a67
+--- /dev/null
++++ b/server/src/__tests__/normal/account-social.test.ts
+@@ -0,0 +1,152 @@
++import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
++import { Hono } from 'hono'
++import { Database } from 'better-sqlite3'
++import { migrate, mock } from 'tests/mock'
++import { typeConfig } from 'configs'
++import { cryptoUtil } from 'utils'
++import { jwtService, userService } from 'services'
++import * as social from 'services/accountSocial'
++import * as identity from 'models/socialIdentity'
++import account from 'routes/account'
++
++let db: Database
++let env: typeConfig.Bindings
++let app: Hono<typeConfig.Context>
++let passwordHash: string
++const password = 'Synthetic-Test-Only-493!'
++const providerFetch = vi.fn()
++
++beforeEach(async () => {
++  db = await migrate()
++  passwordHash = await cryptoUtil.bcryptText(password)
++  db.prepare('INSERT INTO user(authId,email,password,emailVerified,otpSecret) VALUES(?,?,?,?,?)').run('owner', 'owner@example.test', passwordHash, 1, 'test-otp')
++  db.prepare('INSERT INTO user(authId,email,password,emailVerified,otpSecret) VALUES(?,?,?,?,?)').run('other', 'other@example.test', passwordHash, 1, 'test-otp')
++  db.prepare('UPDATE app SET redirectUris=? WHERE clientId=?').run('https://auth.example.test/account', 'naccount-user-portal')
++  env = { ...process.env, ...mock(db), AUTH_SERVER_URL: 'https://auth.example.test', NACCOUNT_PORTAL_CLIENT_ID: 'naccount-user-portal',
++    GOOGLE_AUTH_CLIENT_ID: 'google-test', GOOGLE_AUTH_CLIENT_SECRET: 'google-secret-fixture',
++    GITHUB_AUTH_CLIENT_ID: 'github-test', GITHUB_AUTH_CLIENT_SECRET: 'github-secret-fixture', GITHUB_AUTH_APP_NAME: 'test-app',
++    PG_CONNECTION_STRING: '',
++  } as unknown as typeConfig.Bindings
++  vi.spyOn(jwtService, 'getAccessTokenBody').mockImplementation(async (_c, token) => {
++    if (!['owner', 'other', 'admin-client', 'no-profile'].includes(token)) throw new Error('Invalid fixture token')
++    return { sub: token === 'other' ? 'other' : 'owner', azp: token === 'admin-client' ? 'administrator-client' : 'naccount-user-portal',
++      scope: token === 'no-profile' ? 'openid' : 'openid profile', iss: env.AUTH_SERVER_URL } as typeConfig.AccessTokenBody
++  })
++  vi.spyOn(jwtService, 'verifyGoogleCredential').mockResolvedValue({ id: 'google-subject', email: 'different-provider-email@example.test', emailVerified: true, firstName: 'External', lastName: '' })
++  providerFetch.mockReset()
++  providerFetch.mockImplementation(async (url) => Response.json(String(url).includes('/user') ? { id: 12345, login: 'github-user' } : { id_token: 'signed-test-token', access_token: 'provider-test-token' }))
++  vi.stubGlobal('fetch', providerFetch)
++  app = new Hono<typeConfig.Context>()
++  app.route('/', account)
++  app.get('/identity/v1/authorize-github', (c) => social.callback(c, 'GitHub'))
++  app.get('/simulate-google-login', async (c) => c.json(await userService.processGoogleAccount(c, { id: 'google-subject', email: 'different-provider-email@example.test', emailVerified: true, firstName: '', lastName: '' }, 'en')))
++  app.get('/simulate-github-login', async (c) => c.json(await userService.processGithubAccount(c, { id: '12345', email: null as any, firstName: '', lastName: '' }, 'en')))
++})
++afterEach(() => { db.close(); vi.restoreAllMocks(); vi.unstubAllGlobals() })
++
++const post = (path: string, body: object, token = 'owner') => app.request(path, {
++  method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify(body),
++}, env)
++async function start(provider: 'Google' | 'GitHub' = 'Google', token = 'owner') {
++  const response = await post('/account/api/social/start', { provider, password }, token)
++  expect(response.status).toBe(200)
++  const { authorizeUrl } = await response.json() as { authorizeUrl: string }
++  const url = new URL(authorizeUrl)
++  const cookie = response.headers.get('set-cookie')!.split(';')[0]
++  return { url, cookie, state: url.searchParams.get('state')!, callback: url.searchParams.get('redirect_uri')! }
++}
++const finish = (value: Awaited<ReturnType<typeof start>>, query = '') => app.request(`${value.callback}?state=${value.state}&code=provider-code${query}`, { headers: { Cookie: value.cookie } }, env)
++
++describe('self-service social identities (D1)', () => {
++  it.each(['Google', 'GitHub'] as const)('binds %s and resolves future login to the original authId, not the provider email', async (provider) => {
++    const value = await start(provider)
++    expect(value.url.searchParams.get('code_challenge_method')).toBe('S256')
++    expect(value.url.searchParams.get('code_challenge')).toHaveLength(43)
++    const response = await finish(value)
++    expect(response.headers.get('location')).toBe('/account?link_result=success')
++    expect(db.prepare('SELECT count(*) AS count FROM user').get()).toEqual({ count: 2 })
++    const login = await app.request(provider === 'Google' ? '/simulate-google-login' : '/simulate-github-login', {}, env)
++    expect(login.status).toBe(200)
++    expect(await login.json()).toMatchObject({ authId: 'owner', email: 'owner@example.test' })
++    const tokenBody = new URLSearchParams(providerFetch.mock.calls[0][1].body)
++    expect(tokenBody.get('redirect_uri')).toBe(value.callback)
++    expect(tokenBody.get('code_verifier')).toHaveLength(64)
++    expect(tokenBody.get('code_verifier')).not.toBe(value.url.searchParams.get('code_challenge'))
++    if (provider === 'Google') expect(jwtService.verifyGoogleCredential).toHaveBeenCalledWith('google-test', 'signed-test-token', value.url.searchParams.get('nonce'))
++    const calls = providerFetch.mock.calls.length
++    expect((await finish(value)).headers.get('location')).toBe('/account?link_result=failed')
++    expect(providerFetch).toHaveBeenCalledTimes(calls)
++  })
++  it.each(['admin-client', 'no-profile', 'invalid-token'])('rejects unrelated or invalid token %s', async (token) => {
++    expect((await post('/account/api/social/start', { provider: 'Google', password }, token)).status).not.toBe(200)
++    expect(db.prepare('SELECT count(*) AS count FROM naccount_link_request').get()).toEqual({ count: 0 })
++  })
++  it('requires a current password and verified email, and does not accept an owner ID from the body', async () => {
++    expect((await post('/account/api/social/start', { provider: 'Google', password: 'wrong', authId: 'other' })).status).toBe(400)
++    db.prepare('UPDATE user SET emailVerified=0 WHERE authId=?').run('owner')
++    expect((await post('/account/api/social/start', { provider: 'Google', password })).status).toBe(400)
++  })
++  it.each(['browser', 'state', 'expired', 'cancelled', 'duplicate'])('rejects invalid callback: %s without contacting provider', async (kind) => {
++    const value = await start()
++    if (kind === 'browser') value.cookie = '__Host-naccount-link-google=wrong-browser'
++    if (kind === 'state') value.state += 'x'
++    if (kind === 'expired') db.prepare('UPDATE naccount_link_request SET expiresAt=0').run()
++    const response = await finish(value, kind === 'cancelled' ? '&error=access_denied' : kind === 'duplicate' ? '&state=another' : '')
++    expect(response.headers.get('location')).toBe('/account?link_result=failed')
++    expect(providerFetch).not.toHaveBeenCalled()
++    expect(await identity.list(env.DB, 1)).toEqual([])
++  })
++  it.each(['disabled', 'deleted', 'password', 'client'])('rejects owner or client changes during authorization: %s', async (kind) => {
++    const value = await start()
++    if (kind === 'disabled') db.prepare('UPDATE user SET isActive=0 WHERE authId=?').run('owner')
++    if (kind === 'deleted') db.prepare('UPDATE user SET deletedAt=CURRENT_TIMESTAMP WHERE authId=?').run('owner')
++    if (kind === 'password') db.prepare('UPDATE user SET password=? WHERE authId=?').run('changed', 'owner')
++    if (kind === 'client') db.prepare('UPDATE app SET isActive=0 WHERE clientId=?').run('naccount-user-portal')
++    expect((await finish(value)).headers.get('location')).toBe('/account?link_result=failed')
++    expect(providerFetch).not.toHaveBeenCalled()
++  })
++  it('does not reassign a provider identity already bound to someone else', async () => {
++    await finish(await start())
++    expect((await finish(await start('Google', 'other'))).headers.get('location')).toBe('/account?link_result=failed')
++    expect((await identity.resolve(env.DB, 'Google', 'google-subject'))?.authId).toBe('owner')
++  })
++  it('does not merge an existing native provider account, even with identical email', async () => {
++    db.prepare('UPDATE user SET socialAccountType=?,socialAccountId=? WHERE authId=?').run('Google', 'google-subject', 'other')
++    expect((await finish(await start())).headers.get('location')).toBe('/account?link_result=failed')
++    expect(await identity.list(env.DB, 1)).toEqual([])
++  })
++  it('database constraints reject races with legacy registration and duplicate primary identities', async () => {
++    await finish(await start())
++    expect(() => db.prepare('UPDATE user SET socialAccountType=?,socialAccountId=? WHERE authId=?').run('Google', 'google-subject', 'other')).toThrow()
++    db.prepare('UPDATE user SET socialAccountType=?,socialAccountId=? WHERE authId=?').run('GitHub', 'legacy-id', 'other')
++    expect(() => db.prepare('UPDATE user SET socialAccountType=?,socialAccountId=? WHERE authId=?').run('GitHub', 'legacy-id', 'owner')).toThrow()
++  })
++  it('will not create a replacement account for a disabled/deleted binding owner', async () => {
++    await finish(await start())
++    db.prepare('UPDATE user SET isActive=0 WHERE authId=?').run('owner')
++    await expect(identity.resolve(env.DB, 'Google', 'google-subject')).rejects.toThrow('NACCOUNT_LINKED_ACCOUNT_UNAVAILABLE')
++    expect(db.prepare('SELECT count(*) AS count FROM user').get()).toEqual({ count: 2 })
++  })
++  it('unbind requires current password, operates only on self, and leaves password usable', async () => {
++    await finish(await start())
++    expect((await post('/account/api/social/unlink', { provider: 'Google', password }, 'other')).status).toBe(400)
++    expect((await post('/account/api/social/unlink', { provider: 'Google', password: 'wrong' })).status).toBe(400)
++    expect((await post('/account/api/social/unlink', { provider: 'Google', password })).status).toBe(200)
++    expect(await identity.resolve(env.DB, 'Google', 'google-subject')).toBeNull()
++    expect((db.prepare('SELECT password FROM user WHERE authId=?').get('owner') as any).password).toBe(passwordHash)
++  })
++  it('does not offer destructive management when no password remains', async () => {
++    db.prepare('UPDATE user SET password=NULL WHERE authId=?').run('owner')
++    const response = await app.request('/account/api/social', { headers: { Authorization: 'Bearer owner' } }, env)
++    expect(await response.json()).toMatchObject({ canManage: false })
++    expect((await post('/account/api/social/unlink', { provider: 'Google', password })).status).toBe(400)
++  })
++  it('fails closed and consumes the transaction if the provider is unavailable', async () => {
++    const value = await start()
++    providerFetch.mockRejectedValue(new Error('sensitive-provider-details'))
++    const response = await finish(value)
++    expect(response.headers.get('location')).toBe('/account?link_result=failed')
++    expect(await response.text()).not.toContain('sensitive')
++    expect(db.prepare('SELECT count(*) AS count FROM naccount_link_request').get()).toEqual({ count: 0 })
++  })
++})
+diff --git a/server/src/__tests__/normal/social-google-proof.test.ts b/server/src/__tests__/normal/social-google-proof.test.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..f0b947bde930ec4f5453989b90df56e4523414e8
+--- /dev/null
++++ b/server/src/__tests__/normal/social-google-proof.test.ts
+@@ -0,0 +1,37 @@
++import { afterEach, describe, expect, it, vi } from 'vitest'
++import { generateKeyPairSync, sign } from 'node:crypto'
++import { jwtService } from 'services'
++
++const { privateKey, publicKey } = generateKeyPairSync('rsa', { modulusLength: 2048 })
++const jwk = { ...publicKey.export({ format: 'jwk' }), kid: 'isolated-provider-fixture' }
++const token = (overrides: Record<string, unknown> = {}) => {
++  const now = Math.floor(Date.now() / 1000)
++  const payload = { iss: 'https://accounts.google.com', aud: 'google-client', sub: 'provider-subject', nonce: 'one-time-nonce',
++    email: 'provider@example.test', email_verified: true, iat: now, exp: now + 300, ...overrides }
++  const data = `${Buffer.from(JSON.stringify({ alg: 'RS256', kid: jwk.kid })).toString('base64url')}.${Buffer.from(JSON.stringify(payload)).toString('base64url')}`
++  return `${data}.${Buffer.from(sign('RSA-SHA256', Buffer.from(data), privateKey)).toString('base64url')}`
++}
++afterEach(() => vi.unstubAllGlobals())
++
++describe('signed Google linking proof', () => {
++  it('accepts matching issuer, audience, subject, nonce and recent signed claims', async () => {
++    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json({ keys: [jwk] })))
++    expect(await jwtService.verifyGoogleCredential('google-client', token(), 'one-time-nonce')).toMatchObject({ id: 'provider-subject', emailVerified: true })
++  })
++  it.each([
++    { nonce: 'different' }, { aud: 'different-client' }, { iss: 'https://evil.example' },
++    { sub: '' }, { iat: 1 }, { iat: Math.floor(Date.now() / 1000) + 1000 },
++    { email_verified: false }, { email_verified: 'true' }, { azp: 'different-client' }, { aud: ['google-client', 'other'] },
++  ])('rejects mismatched signed claims: %j', async (claims) => {
++    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json({ keys: [jwk] })))
++    let value
++    try { value = await jwtService.verifyGoogleCredential('google-client', token(claims), 'one-time-nonce') } catch { value = undefined }
++    expect(value).toBeUndefined()
++  })
++  it('rejects a valid-looking token whose signature is forged', async () => {
++    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json({ keys: [jwk] })))
++    const parts = token().split('.')
++    parts[1] = Buffer.from(JSON.stringify({ sub: 'attacker' })).toString('base64url')
++    await expect(jwtService.verifyGoogleCredential('google-client', parts.join('.'), 'one-time-nonce')).rejects.toThrow()
++  })
++})
+diff --git a/server/src/configs/type.ts b/server/src/configs/type.ts
+index a99594e7da34583db76834972b7d751a59e6c85a..de425d88e3c56a91f187fb67624a2504f9774df1 100644
+--- a/server/src/configs/type.ts
++++ b/server/src/configs/type.ts
+@@ -48,6 +48,7 @@ export type Bindings = {
+   SMTP_SENDER_ADDRESS: string;
+   AUTH_SERVER_URL: string;
+   NACCOUNT_PORTAL_CLIENT_ID?: string;
++  GOOGLE_AUTH_CLIENT_SECRET?: string;
+   ENABLE_SIGN_UP: boolean;
+   ENABLE_PASSWORD_SIGN_IN: boolean;
+   ENABLE_PASSWORD_RESET: boolean;
+diff --git a/server/src/handlers/identity/social.ts b/server/src/handlers/identity/social.ts
+index 65cc7900b25832cf490b8fb4adb0c6e2fe02f79d..80f858972ab3a354f05357951bb7d3222030b078 100644
+--- a/server/src/handlers/identity/social.ts
++++ b/server/src/handlers/identity/social.ts
+@@ -17,6 +17,7 @@ import {
+ import {
+   appModel, userModel,
+ } from 'models'
++import * as accountSocial from 'services/accountSocial'
+ 
+ const parseSocialAuthorizeState = (
+   c: Context<typeConfig.Context>,
+@@ -183,6 +184,7 @@ export const postAuthorizeFacebook = async (c: Context<typeConfig.Context>) => {
+ export const getAuthorizeGithub = async (c: Context<typeConfig.Context>) => {
+   const code = c.req.query('code')
+   const state = c.req.query('state') ?? ''
++  if (state.startsWith(accountSocial.statePrefix)) return accountSocial.callback(c, 'GitHub')
+ 
+   if (!code || !state) {
+     loggerUtil.triggerLogger(
+diff --git a/server/src/models/socialIdentity.ts b/server/src/models/socialIdentity.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..9864912e3efc9b564c93a702feebf7cf574c02a3
+--- /dev/null
++++ b/server/src/models/socialIdentity.ts
+@@ -0,0 +1,56 @@
++import { errorConfig } from 'configs'
++import { userModel } from 'models'
++
++export type Provider = 'Google' | 'GitHub'
++export interface Identity { provider: Provider; subject: string; userId: number; label: string }
++export interface LinkRequest {
++  state: string; provider: Provider; userId: number; clientId: string;
++  passwordFingerprint: string; browserHash: string; verifier: string; nonce: string; expiresAt: number;
++}
++
++export const list = async (db: D1Database, userId: number) => {
++  const result = await db.prepare('SELECT provider,subject,"userId",label FROM naccount_social_identity WHERE "userId"=$1').bind(userId).all<Identity>()
++  return result.results
++}
++
++export const resolve = async (db: D1Database, provider: Provider, subject: string, org?: string): Promise<userModel.Record | null> => {
++  const identity = await db.prepare('SELECT "userId" FROM naccount_social_identity WHERE provider=$1 AND subject=$2').bind(provider, String(subject)).first<{ userId: number }>()
++  if (!identity) return null
++  const raw = await db.prepare('SELECT * FROM "user" WHERE id=$1').bind(identity.userId).first<userModel.Raw>()
++  // A disabled/deleted owner is never replaced by a newly created provider account.
++  if (!raw || raw.deletedAt || !raw.isActive || (org && org !== 'default' && raw.orgSlug !== org) || (org === 'default' && raw.orgSlug)) {
++    throw new errorConfig.Forbidden('NACCOUNT_LINKED_ACCOUNT_UNAVAILABLE')
++  }
++  return userModel.convertToRecord(raw)
++}
++
++export const consume = (db: D1Database, state: string, provider: Provider, browserHash: string) => db.prepare(
++  'DELETE FROM naccount_link_request WHERE state=$1 AND provider=$2 AND "browserHash"=$3 AND "expiresAt">$4 RETURNING *',
++).bind(state, provider, browserHash, Date.now()).first<LinkRequest>()
++
++export const saveRequest = async (db: D1Database, value: LinkRequest) => {
++  // Short-lived authorization material, never provider tokens or the user's password.
++  await db.prepare('DELETE FROM naccount_link_request WHERE expiresAt<=$1 OR (userId=$2 AND provider=$3)').bind(Date.now(), value.userId, value.provider).run()
++  await db.prepare('INSERT INTO naccount_link_request(state,provider,userId,clientId,passwordFingerprint,browserHash,verifier,nonce,expiresAt) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)').bind(
++    value.state, value.provider, value.userId, value.clientId, value.passwordFingerprint,
++    value.browserHash, value.verifier, value.nonce, value.expiresAt,
++  ).run()
++}
++
++export const bind = async (db: D1Database, identity: Identity, password: string) => {
++  try {
++    const result = await db.prepare(`INSERT INTO naccount_social_identity(provider,subject,"userId",label)
++      SELECT $1,$2,id,$3 FROM "user" WHERE id=$4 AND password=$5 AND "isActive"=1 AND "emailVerified"=1 AND "deletedAt" IS NULL RETURNING provider`).bind(
++      identity.provider, identity.subject, identity.label, identity.userId, password,
++    ).first()
++    if (!result) throw new Error('Owner changed')
++  } catch {
++    // Includes uniqueness/legacy-ownership races. Never retry or silently reassign.
++    throw new errorConfig.Forbidden('NACCOUNT_IDENTITY_CONFLICT')
++  }
++}
++
++export const unbind = (db: D1Database, provider: Provider, userId: number, password: string) => db.prepare(
++  `DELETE FROM naccount_social_identity WHERE provider=$1 AND "userId"=$2
++   AND EXISTS (SELECT 1 FROM "user" WHERE id=$3 AND password=$4 AND "isActive"=1 AND "deletedAt" IS NULL) RETURNING provider`,
++).bind(provider, userId, userId, password).first<{ provider: Provider }>()
+diff --git a/server/src/pages/account/Account.test.tsx b/server/src/pages/account/Account.test.tsx
+index 1b5ffdae1ee324d8c57361cae1e5453c4d66cff2..3a567c9daf8506411bfde1715ad79bfa2e3048d1 100644
+--- a/server/src/pages/account/Account.test.tsx
++++ b/server/src/pages/account/Account.test.tsx
+@@ -3,6 +3,7 @@ import { render } from 'hono/jsx/dom'
+ import { fireEvent, getByRole, queryByRole, waitFor } from '@testing-library/dom'
+ import Account from './Account'
+ import * as auth from './auth'
++vi.mock('./SocialAccounts', () => ({ default: () => <section>Social accounts fixture</section> }))
+ 
+ vi.mock('./auth', async (original) => ({
+   ...await original<typeof import('./auth')>(),
+@@ -68,7 +69,7 @@ describe('ordinary-user account center', () => {
+     expect(queryByRole(container, 'status')).toBeNull()
+     expect(queryByRole(container, 'button', { name: '注册账号' })).toBeNull()
+   })
+-  it('does not show social binding as implemented before its API exists', async () => {
++  it('does not expose social management to a logged-out visitor', async () => {
+     render(<Account />, container)
+     await waitFor(() => expect(getByRole(container, 'button', { name: '登录' })).toBeTruthy())
+     expect(queryByRole(container, 'button', { name: /绑定/ })).toBeNull()
+diff --git a/server/src/pages/account/Account.tsx b/server/src/pages/account/Account.tsx
+index a4cf3e7392465e83f074da85fa62b3eac0efb55c..aa71e19c7f07fd5f5dcedb94124c7611c9083af3 100644
+--- a/server/src/pages/account/Account.tsx
++++ b/server/src/pages/account/Account.tsx
+@@ -1,5 +1,6 @@
+ import { useEffect, useState } from 'hono/jsx'
+ import * as auth from './auth'
++import SocialAccounts from './SocialAccounts'
+ 
+ const actions: Record<string, string> = {
+   update_info: '修改个人资料', change_password: '修改密码', change_email: '修改邮箱',
+@@ -30,6 +31,11 @@ export default function Account() {
+         const nextConfig = await auth.request<auth.PortalConfig>('/account/config')
+         if (cancelled) return
+         setConfig(nextConfig)
++        const result = new URLSearchParams(window.location.search).get('link_result')
++        if (result) {
++          window.history.replaceState(null, '', window.location.pathname)
++          if (result === 'failed') setError('社交账号绑定未完成或已被其他账号占用，请重新发起授权。')
++        }
+         const token = await auth.restore(nextConfig)
+         if (cancelled) return
+         const nextUser = token ? await auth.profile(nextConfig, token) : null
+@@ -82,6 +88,7 @@ export default function Account() {
+               onClick={() => run(() => auth.authorize(config, policy))}>{actions[policy]}</button>)}
+           </div>
+         </section>
++        {accessToken && <SocialAccounts accessToken={accessToken} />}
+         <button class={button} disabled={busy} onClick={() => run(async () => {
+           setUser(null)
+           setAccessToken(null)
+diff --git a/server/src/pages/account/SocialAccounts.test.tsx b/server/src/pages/account/SocialAccounts.test.tsx
+new file mode 100644
+index 0000000000000000000000000000000000000000..a5aab1e56dd67707a0171a47f7e3b0757cb6f76c
+--- /dev/null
++++ b/server/src/pages/account/SocialAccounts.test.tsx
+@@ -0,0 +1,51 @@
++import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
++import { render } from 'hono/jsx/dom'
++import { fireEvent, getByRole, getByLabelText, waitFor } from '@testing-library/dom'
++import SocialAccounts from './SocialAccounts'
++import { request } from './auth'
++vi.mock('./auth', () => ({ request: vi.fn() }))
++let container: HTMLDivElement
++beforeEach(() => {
++  vi.resetAllMocks()
++  container = document.createElement('div'); document.body.appendChild(container)
++  vi.mocked(request).mockResolvedValue({ canManage: true, providers: [
++    { provider: 'Google', available: true, bound: false, primary: false, label: null },
++    { provider: 'GitHub', available: true, bound: true, primary: false, label: 'github-user' },
++  ] })
++})
++afterEach(() => { render(null, container); container.remove(); vi.restoreAllMocks() })
++describe('social account management', () => {
++  it('shows truthful binding status and requires password confirmation', async () => {
++    render(<SocialAccounts accessToken='ordinary-user-token' />, container)
++    await waitFor(() => expect(container.textContent).toContain('github-user'))
++    expect((getByRole(container, 'button', { name: '绑定 Google' }) as HTMLButtonElement).disabled).toBe(true)
++    expect((getByRole(container, 'button', { name: '解绑 GitHub' }) as HTMLButtonElement).disabled).toBe(true)
++  })
++  it('cancels unlink without any mutation request', async () => {
++    vi.spyOn(window, 'confirm').mockReturnValue(false)
++    render(<SocialAccounts accessToken='token' />, container)
++    await waitFor(() => expect(container.textContent).toContain('github-user'))
++    fireEvent.input(getByLabelText(container, '确认当前密码'), { target: { value: 'fixture-only' } })
++    await waitFor(() => expect((getByRole(container, 'button', { name: '解绑 GitHub' }) as HTMLButtonElement).disabled).toBe(false))
++    fireEvent.click(getByRole(container, 'button', { name: '解绑 GitHub' }))
++    expect(request).toHaveBeenCalledTimes(1)
++  })
++  it('clears the typed password and shows an error after rejected binding', async () => {
++    render(<SocialAccounts accessToken='token' />, container)
++    await waitFor(() => expect(container.textContent).toContain('github-user'))
++    fireEvent.input(getByLabelText(container, '确认当前密码'), { target: { value: 'fixture-only' } })
++    vi.mocked(request).mockRejectedValueOnce(new Error('Do not display provider details'))
++    await waitFor(() => expect((getByRole(container, 'button', { name: '绑定 Google' }) as HTMLButtonElement).disabled).toBe(false))
++    fireEvent.click(getByRole(container, 'button', { name: '绑定 Google' }))
++    await waitFor(() => expect(getByRole(container, 'alert').textContent).toContain('操作未完成'))
++    expect((getByLabelText(container, '确认当前密码') as HTMLInputElement).value).toBe('')
++    expect(container.textContent).not.toContain('Do not display')
++  })
++  it('does not enable unavailable providers or primary identity deletion', async () => {
++    vi.mocked(request).mockResolvedValue({ canManage: false, providers: [{ provider: 'Google', primary: true, bound: false, available: true }, { provider: 'GitHub', primary: false, bound: false, available: false }] })
++    render(<SocialAccounts accessToken='token' />, container)
++    await waitFor(() => expect(container.textContent).toContain('原始登录方式'))
++    expect(container.textContent).not.toContain('解绑 Google')
++    expect((getByRole(container, 'button', { name: '绑定 GitHub' }) as HTMLButtonElement).disabled).toBe(true)
++  })
++})
+diff --git a/server/src/pages/account/SocialAccounts.tsx b/server/src/pages/account/SocialAccounts.tsx
+new file mode 100644
+index 0000000000000000000000000000000000000000..2a1c1b2a86c5fe0efbc04f00aa6fd60ffcb3bc6d
+--- /dev/null
++++ b/server/src/pages/account/SocialAccounts.tsx
+@@ -0,0 +1,67 @@
++import { useEffect, useState } from 'hono/jsx'
++import { request } from './auth'
++
++interface SocialStatus {
++  canManage: boolean;
++  providers: { provider: 'Google' | 'GitHub'; available: boolean; bound: boolean; primary: boolean; label: string | null }[];
++}
++
++export default function SocialAccounts({ accessToken }: { accessToken: string }) {
++  const [status, setStatus] = useState<SocialStatus | null>(null)
++  const [password, setPassword] = useState('')
++  const [busy, setBusy] = useState(false)
++  const [error, setError] = useState('')
++  const [attempt, setAttempt] = useState(0)
++  const headers = { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' }
++  useEffect(() => {
++    let stale = false
++    setBusy(true)
++    setError('')
++    void request<SocialStatus>('/account/api/social', { headers }).then((value) => {
++      if (!stale) setStatus(value)
++    }).catch(() => {
++      if (!stale) setError('无法读取社交账号，请重试或重新登录。')
++    }).finally(() => { if (!stale) setBusy(false) })
++    return () => { stale = true }
++  }, [accessToken, attempt])
++
++  const act = async (provider: 'Google' | 'GitHub', unlink: boolean) => {
++    if (busy || !password) return
++    if (unlink && !window.confirm(`确认解绑 ${provider}？解绑后该社交账号将不能登录此 NAccount。`)) return
++    setBusy(true)
++    setError('')
++    const secret = password
++    setPassword('')
++    try {
++      const result = await request<{ authorizeUrl?: string }>(`/account/api/social/${unlink ? 'unlink' : 'start'}`, {
++        method: 'POST', headers, body: JSON.stringify({ provider, password: secret }),
++      })
++      if (unlink) { setAttempt(attempt + 1); return }
++      const url = new URL(result.authorizeUrl ?? '')
++      if (url.protocol !== 'https:' || url.hostname !== (provider === 'Google' ? 'accounts.google.com' : 'github.com')) throw new Error('Invalid provider URL')
++      window.location.assign(url.href)
++    } catch {
++      setError('操作未完成。请检查当前密码、邮箱验证状态和账号绑定状态后重试。')
++    } finally { setBusy(false) }
++  }
++  const button = 'rounded-lg border border-slate-300 px-4 py-2 disabled:opacity-50 focus-visible:outline-2'
++  return <section aria-labelledby='social-accounts' class='rounded-xl border border-slate-200 bg-white p-6'>
++    <h2 id='social-accounts' class='text-lg font-semibold mb-4'>社交账号</h2>
++    {busy && <p role='status'>正在处理…</p>}
++    {error && <div role='alert'><p>{error}</p><button class={button} disabled={busy} onClick={() => setAttempt(attempt + 1)}>重试社交账号</button></div>}
++    {status && <>
++      {!status.canManage && <p>绑定管理需要已验证邮箱和当前账号密码。</p>}
++      {status.canManage && <label class='flex flex-col gap-2 mb-4'>确认当前密码
++        <input class='rounded-lg border border-slate-300 p-3' type='password' autoComplete='current-password' value={password}
++          disabled={busy} onInput={(event) => setPassword((event.target as HTMLInputElement).value)} />
++      </label>}
++      <ul class='flex flex-col gap-4'>
++        {status.providers.map((entry) => <li key={entry.provider} class='flex flex-wrap items-center justify-between gap-3'>
++          <div><strong>{entry.provider}</strong><p class='text-sm'>{entry.primary ? '原始登录方式' : entry.bound ? `已绑定 · ${entry.label ?? ''}` : entry.available ? '未绑定' : '未配置'}</p></div>
++          {!entry.primary && <button class={button} disabled={busy || !status.canManage || !password || (!entry.bound && !entry.available)}
++            onClick={() => act(entry.provider, entry.bound)}>{entry.bound ? `解绑 ${entry.provider}` : `绑定 ${entry.provider}`}</button>}
++        </li>)}
++      </ul>
++    </>}
++  </section>
++}
+diff --git a/server/src/router.tsx b/server/src/router.tsx
+index 09f1b555c8b51e7968927382ca63548ffa7ab241..e7b3099753d6f679ea844d78aa261d07c70d2080 100644
+--- a/server/src/router.tsx
++++ b/server/src/router.tsx
+@@ -22,7 +22,8 @@ export const loadRouters = (app: Hono<typeConfig.Context>) => {
+       const {
+         LOG_LEVEL: logLevel, ENVIRONMENT: environment,
+       } = env(c)
+-      if (logLevel === loggerUtil.LoggerLevel.Info || environment === variableConfig.DefaultEnvironment.Development) {
++      const sensitiveCallback = c.req.path.startsWith('/account') || c.req.path === routeConfig.IdentityRoute.AuthorizeGitHub
++      if (!sensitiveCallback && (logLevel === loggerUtil.LoggerLevel.Info || environment === variableConfig.DefaultEnvironment.Development)) {
+         const loggerMiddleware = logger(loggerUtil.customLogger)
+         return loggerMiddleware(
+           c,
+diff --git a/server/src/routes/account.test.ts b/server/src/routes/account.test.ts
+index 7e7539aaf4b95681304ad2366b7c9b4d6f0766c0..ab1fa5f8b34c590408346c41520a12e4dd0d4eb7 100644
+--- a/server/src/routes/account.test.ts
++++ b/server/src/routes/account.test.ts
+@@ -3,7 +3,7 @@ import { ClientType } from '@melody-auth/shared'
+ import account from './account'
+ import { appModel } from 'models'
+ 
+-vi.mock('models', () => ({ appModel: { getByClientId: vi.fn() } }))
++vi.mock('models', async (original) => ({ ...await original<typeof import('models')>(), appModel: { getByClientId: vi.fn() } }))
+ const env = {
+   NACCOUNT_PORTAL_CLIENT_ID: 'portal-only', AUTH_SERVER_URL: 'https://auth.example.test',
+   ENABLE_SIGN_UP: true, ENABLE_PASSWORD_RESET: true, ENABLE_EMAIL_VERIFICATION: true,
+@@ -20,6 +20,11 @@ beforeEach(() => {
+ })
+ 
+ describe('public account surface', () => {
++  it('makes the auth origin root a discoverable ordinary-user entry', async () => {
++    const response = await account.request('/', {}, env)
++    expect(response.status).toBe(302)
++    expect(response.headers.get('location')).toBe('/account')
++  })
+   it('serves an ordinary-user portal without authentication or admin privilege', async () => {
+     const res = await account.request('/account', {}, env)
+     expect(res.status).toBe(200)
+diff --git a/server/src/routes/account.tsx b/server/src/routes/account.tsx
+index f07077a2cfa9e7f468b46ddcbb886e1d179439d0..6bb2f1f433b4c72efe67cce39546a86d63f0ff42 100644
+--- a/server/src/routes/account.tsx
++++ b/server/src/routes/account.tsx
+@@ -2,10 +2,15 @@ import { Hono } from 'hono'
+ import { ClientType } from '@melody-auth/shared'
+ import { typeConfig } from 'configs'
+ import { appModel } from 'models'
++import { authMiddleware } from 'middlewares'
++import { bodyLimit } from 'hono/body-limit'
++import * as social from 'services/accountSocial'
+ 
+ // This surface never resolves or exposes the administrator application's secret.
+ const account = new Hono<typeConfig.Context>()
+ 
++account.onError((_error, c) => c.json({ error: 'NACCOUNT_SOCIAL_REQUEST_DENIED' }, 400))
++
+ account.use('*', async (c, next) => {
+   c.header('Cache-Control', 'no-store')
+   c.header('Referrer-Policy', 'no-referrer')
+@@ -37,6 +42,13 @@ account.get('/account/config', async (c) => {
+   })
+ })
+ 
++account.get('/account/api/social', authMiddleware.spaProfile, social.status)
++account.post('/account/api/social/start', bodyLimit({ maxSize: 8192 }), authMiddleware.spaProfile, social.start)
++account.post('/account/api/social/unlink', bodyLimit({ maxSize: 8192 }), authMiddleware.spaProfile, social.unlink)
++account.get('/account/social/google/callback', (c) => social.callback(c, 'Google'))
++account.get('/', (c) => c.redirect('/account'))
++account.get('/account/', (c) => c.redirect('/account'))
++
+ account.get('/account', (c) => c.html(
+   <html lang='zh-CN'>
+     <head>
+diff --git a/server/src/services/accountSocial.ts b/server/src/services/accountSocial.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..8c34966ef399e1e73e660e0b85d5e3690cef4a27
+--- /dev/null
++++ b/server/src/services/accountSocial.ts
+@@ -0,0 +1,168 @@
++import { Context } from 'hono'
++import { getCookie, setCookie, deleteCookie } from 'hono/cookie'
++import { ClientType } from '@melody-auth/shared'
++import { errorConfig, routeConfig, typeConfig } from 'configs'
++import { appModel, userModel } from 'models'
++import * as identity from 'models/socialIdentity'
++import { jwtService, userService } from 'services'
++import { cryptoUtil } from 'utils'
++
++export const statePrefix = 'naccount-link.'
++const random = () => crypto.randomUUID().replace(/-/g, '') + crypto.randomUUID().replace(/-/g, '')
++export const digest = async (value: string) => {
++  const hash = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value)))
++  return btoa(String.fromCharCode(...hash)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
++}
++const denied = () => new errorConfig.Forbidden('NACCOUNT_SOCIAL_REQUEST_DENIED')
++const cookieName = (provider: identity.Provider) => `__Host-naccount-link-${provider.toLowerCase()}`
++export const provider = (value: string): identity.Provider => {
++  if (value !== 'Google' && value !== 'GitHub') throw denied()
++  return value
++}
++export const available = (c: Context<typeConfig.Context>, name: identity.Provider) => name === 'Google'
++  ? !!(c.env.GOOGLE_AUTH_CLIENT_ID && c.env.GOOGLE_AUTH_CLIENT_SECRET)
++  : !!(c.env.GITHUB_AUTH_CLIENT_ID && c.env.GITHUB_AUTH_CLIENT_SECRET && c.env.GITHUB_AUTH_APP_NAME)
++
++const portalClient = async (c: Context<typeConfig.Context>, clientId: string) => {
++  if (!clientId || clientId !== c.env.NACCOUNT_PORTAL_CLIENT_ID) throw denied()
++  const app = await appModel.getByClientId(c.env.DB, clientId)
++  if (!app || !app.isActive || app.type !== ClientType.SPA || !app.redirectUris.includes(`${c.env.AUTH_SERVER_URL.replace(/\/$/, '')}/account`)) throw denied()
++}
++
++export const actor = async (c: Context<typeConfig.Context>) => {
++  // NAccount's transactional binding contract is implemented and validated for Cloudflare D1.
++  if (c.env.PG_CONNECTION_STRING) throw denied()
++  const token = c.get('access_token_body')
++  if (!token || !token.sub || !token.scope.split(' ').includes('profile')) throw denied()
++  await portalClient(c, token.azp)
++  const user = await userModel.getByAuthId(c.env.DB, token.sub)
++  if (!user || !user.isActive || user.deletedAt) throw denied()
++  return user
++}
++
++const confirmPassword = async (c: Context<typeConfig.Context>, user: userModel.Record, password: unknown) => {
++  if (!user.password || !user.email || !user.emailVerified || typeof password !== 'string' || !password || password.length > 1024) throw denied()
++  // Reuse sign-in lockout/rate limits, not an unmetered bcrypt oracle.
++  const confirmed = await userService.verifySignIn(c, user.email, (record) => record.id === user.id && !!record.password && cryptoUtil.bcryptCompare(password, record.password))
++  if (confirmed.id !== user.id) throw denied()
++}
++
++export const status = async (c: Context<typeConfig.Context>) => {
++  const user = await actor(c)
++  const linked = await identity.list(c.env.DB, user.id)
++  return c.json({
++    canManage: !!(user.password && user.emailVerified),
++    providers: (['Google', 'GitHub'] as const).map((name) => ({
++      provider: name, available: available(c, name),
++      bound: linked.some((entry) => entry.provider === name),
++      label: linked.find((entry) => entry.provider === name)?.label ?? null,
++      primary: user.socialAccountType === name,
++    })),
++  })
++}
++
++const callbackUri = (c: Context<typeConfig.Context>, name: identity.Provider) => `${c.env.AUTH_SERVER_URL.replace(/\/$/, '')}${
++  name === 'GitHub' ? routeConfig.IdentityRoute.AuthorizeGitHub : '/account/social/google/callback'
++}`
++
++export const start = async (c: Context<typeConfig.Context>) => {
++  const user = await actor(c)
++  const body = await c.req.json()
++  const name = provider(body.provider)
++  if (!available(c, name)) throw denied()
++  await confirmPassword(c, user, body.password)
++  if (user.socialAccountType === name || (await identity.list(c.env.DB, user.id)).some((entry) => entry.provider === name)) throw denied()
++  const state = statePrefix + random()
++  const verifier = random()
++  const browser = random()
++  const nonce = random()
++  await identity.saveRequest(c.env.DB, {
++    state, provider: name, userId: user.id, clientId: c.env.NACCOUNT_PORTAL_CLIENT_ID!,
++    passwordFingerprint: await digest(user.password!), browserHash: await digest(browser), verifier, nonce,
++    expiresAt: Date.now() + 300000,
++  })
++  setCookie(c, cookieName(name), browser, { httpOnly: true, secure: true, sameSite: 'Lax', path: '/', maxAge: 300 })
++  const params = new URLSearchParams({
++    client_id: name === 'Google' ? c.env.GOOGLE_AUTH_CLIENT_ID : c.env.GITHUB_AUTH_CLIENT_ID,
++    redirect_uri: callbackUri(c, name), response_type: 'code', state,
++    code_challenge: await digest(verifier), code_challenge_method: 'S256',
++    scope: name === 'Google' ? 'openid email profile' : 'read:user',
++  })
++  if (name === 'Google') { params.set('nonce', nonce); params.set('prompt', 'select_account') }
++  const base = name === 'Google' ? 'https://accounts.google.com/o/oauth2/v2/auth' : 'https://github.com/login/oauth/authorize'
++  return c.json({ authorizeUrl: `${base}?${params}` })
++}
++
++async function providerJson(url: string, init: RequestInit): Promise<Record<string, unknown>> {
++  const response = await fetch(url, { ...init, signal: AbortSignal.timeout(10000), redirect: 'error' })
++  if (!response.ok) throw denied()
++  const json = await response.json()
++  if (!json || typeof json !== 'object') throw denied()
++  return json as Record<string, unknown>
++}
++
++export const exchange = async (c: Context<typeConfig.Context>, request: identity.LinkRequest, code: string) => {
++  const google = request.provider === 'Google'
++  const response = await providerJson(google ? 'https://oauth2.googleapis.com/token' : 'https://github.com/login/oauth/access_token', {
++    method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
++    body: new URLSearchParams({
++      client_id: google ? c.env.GOOGLE_AUTH_CLIENT_ID : c.env.GITHUB_AUTH_CLIENT_ID,
++      client_secret: google ? c.env.GOOGLE_AUTH_CLIENT_SECRET! : c.env.GITHUB_AUTH_CLIENT_SECRET,
++      grant_type: 'authorization_code', code, redirect_uri: callbackUri(c, request.provider), code_verifier: request.verifier,
++    }).toString(),
++  })
++  if (google) {
++    if (typeof response.id_token !== 'string') throw denied()
++    const user = await jwtService.verifyGoogleCredential(c.env.GOOGLE_AUTH_CLIENT_ID, response.id_token, request.nonce)
++    if (!user || !user.id || !user.emailVerified) throw denied()
++    return { subject: user.id, label: user.email }
++  }
++  if (typeof response.access_token !== 'string' || !response.access_token) throw denied()
++  const user = await providerJson('https://api.github.com/user', {
++    headers: { Authorization: `Bearer ${response.access_token}`, 'User-Agent': c.env.GITHUB_AUTH_APP_NAME, Accept: 'application/vnd.github+json' },
++  })
++  if (!Number.isSafeInteger(user.id) || Number(user.id) <= 0 || typeof user.login !== 'string') throw denied()
++  return { subject: String(user.id), label: user.login }
++}
++
++export const callback = async (c: Context<typeConfig.Context>, name: identity.Provider) => {
++  c.header('Cache-Control', 'no-store')
++  c.header('Referrer-Policy', 'no-referrer')
++  const browser = getCookie(c, cookieName(name))
++  deleteCookie(c, cookieName(name), { path: '/', secure: true, httpOnly: true, sameSite: 'Lax' })
++  try {
++    const state = c.req.query('state') ?? ''
++    if (!browser || !state.startsWith(statePrefix) || c.req.queries('state')?.length !== 1) throw denied()
++    const request = await identity.consume(c.env.DB, state, name, await digest(browser))
++    // Consume atomically before any external exchange: duplicate/cancelled callbacks are not replayed.
++    if (!request || !available(c, name) || c.req.query('error') || c.req.queries('code')?.length !== 1) throw denied()
++    const code = c.req.query('code')
++    if (!code || code.length > 4096) throw denied()
++    await portalClient(c, request.clientId)
++    const getOwner = async () => {
++      const raw = await c.env.DB.prepare('SELECT * FROM "user" WHERE id=$1').bind(request.userId).first<userModel.Raw>()
++      if (!raw || raw.deletedAt || !raw.isActive || !raw.emailVerified || !raw.password || await digest(raw.password) !== request.passwordFingerprint) throw denied()
++      return raw
++    }
++    await getOwner()
++    const external = await exchange(c, request, code)
++    const owner = await getOwner()
++    await portalClient(c, request.clientId)
++    await identity.bind(c.env.DB, { provider: name, userId: request.userId, ...external }, owner.password!)
++    return c.redirect('/account?link_result=success')
++  } catch {
++    // Neither provider response bodies, credentials, codes nor SQL errors reach the user/logs.
++    return c.redirect('/account?link_result=failed')
++  }
++}
++
++export const unlink = async (c: Context<typeConfig.Context>) => {
++  const user = await actor(c)
++  const body = await c.req.json()
++  const name = provider(body.provider)
++  await confirmPassword(c, user, body.password)
++  // A confirmed usable password remains; native primary social identities are not deleted.
++  const removed = await identity.unbind(c.env.DB, name, user.id, user.password!)
++  if (!removed) throw denied()
++  return c.json({ success: true })
++}
+diff --git a/server/src/services/jwt.ts b/server/src/services/jwt.ts
+index ccb5941411454505c658fcf9c1863947e70310eb..61298683faea7c09af218225c218399c4bcb52e6 100644
+--- a/server/src/services/jwt.ts
++++ b/server/src/services/jwt.ts
+@@ -249,12 +249,12 @@ export interface GoogleUser {
+ }
+ 
+ export const verifyGoogleCredential = async (
+-  clientId: string, credential: string,
++  clientId: string, credential: string, expectedNonce?: string,
+ ) => {
+   const decoded = decode(credential)
+   const header = decoded.header as unknown as { kid: string }
+ 
+-  const response = await fetch('https://www.googleapis.com/oauth2/v3/certs')
++  const response = await fetch('https://www.googleapis.com/oauth2/v3/certs', { signal: AbortSignal.timeout(10000) })
+   const certs = await response.json() as { keys: { kid: string }[] }
+   const publicKey = certs.keys.find((key) => key.kid === header.kid)
+   const result = await verify(
+@@ -266,6 +266,11 @@ export const verifyGoogleCredential = async (
+   const aud = result.aud
+   const audMatches = aud === clientId || (Array.isArray(aud) && aud.includes(clientId))
+ 
++  if (expectedNonce && (result.nonce !== expectedNonce || typeof result.sub !== 'string' || !result.sub ||
++    typeof result.iat !== 'number' || result.iat > Date.now() / 1000 + 30 || result.iat < Date.now() / 1000 - 360 ||
++    typeof result.exp !== 'number' || result.email_verified !== true || typeof result.email !== 'string' ||
++    (result.azp !== undefined && result.azp !== clientId) || (Array.isArray(aud) && result.azp !== clientId))) return undefined
++
+   if (
+     'iss' in result && result.iss === 'https://accounts.google.com' &&
+     audMatches &&
+diff --git a/server/src/services/user.ts b/server/src/services/user.ts
+index 869479a52141a966bc972cd2209dbab48b3e2dd1..dd0a01932d6e9744081d576c3fb9b1069d6abfab 100644
+--- a/server/src/services/user.ts
++++ b/server/src/services/user.ts
+@@ -1,4 +1,5 @@
+ import { Context } from 'hono'
++import * as socialIdentity from 'models/socialIdentity'
+ import { env } from 'hono/adapter'
+ import {
+   GetUserInfoRes, Scope,
+@@ -625,12 +626,15 @@ export const createAccountWithPassword = async (
+   return newUser
+ }
+ 
++
+ export const processGoogleAccount = async (
+   c: Context<typeConfig.Context>,
+   googleUser: jwtService.GoogleUser,
+   locale: typeConfig.Locale,
+   org?: string,
+ ) => {
++  const linked = await socialIdentity.resolve(c.env.DB, 'Google', googleUser.id, org)
++  if (linked) return linked
+   const currentUser = await userModel.getGoogleUserByGoogleId(
+     c.env.DB,
+     googleUser.id,
+@@ -722,6 +726,8 @@ export const processGithubAccount = async (
+   locale: typeConfig.Locale,
+   org?: string,
+ ) => {
++  const linked = await socialIdentity.resolve(c.env.DB, 'GitHub', String(githubUser.id), org)
++  if (linked) return linked
+   const currentUser = await userModel.getGithubUserByGithubId(
+     c.env.DB,
+     githubUser.id,

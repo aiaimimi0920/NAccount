@@ -1,0 +1,1231 @@
+From 8a561bb8c3879a2f0ff4f4b0e3ad76d34db14bf0 Mon Sep 17 00:00:00 2001
+From: aiaimimi0920 <153103332+aiaimimi0920@users.noreply.github.com>
+Date: Sat, 24 Oct 2026 01:32:52 +0800
+Subject: [PATCH] NA-16: add unified hosted login and request-local signing
+ reuse
+
+NAccount-Patch-Topic: user-portal
+---
+ server/src/__tests__/key-rotate/jwt.test.ts   |   3 +
+ .../src/__tests__/normal/hosted-login.test.ts | 185 ++++++++++++++++++
+ .../identity-main/authorize-view.test.ts      |   7 +-
+ .../normal/identity-main/process-view.test.ts |   7 +-
+ .../identity-other/auth-code-expired.test.ts  |   7 +-
+ .../identity-other/verify-email.test.ts       |   7 +-
+ .../identity-policy/change-email.test.ts      |   2 +-
+ .../identity-social/authorize-apple.test.ts   |   2 +-
+ .../identity-social/authorize-google.test.ts  |   4 +-
+ .../identity-social/authorize-oidc.test.ts    |   2 +-
+ server/src/__tests__/normal/jwt.test.ts       |   5 +-
+ .../__tests__/normal/request-latency.test.ts  |   8 +-
+ server/src/__tests__/normal/s2s/app.test.ts   |   5 +-
+ server/src/configs/route.ts                   |   1 +
+ server/src/configs/type.ts                    |   1 +
+ server/src/configs/variable.ts                |   4 +-
+ server/src/handlers/identity/view.tsx         |  38 ++--
+ server/src/handlers/oauth.tsx                 |  19 +-
+ server/src/handlers/other.ts                  |   6 +-
+ server/src/pages/Main.tsx                     |   2 +
+ server/src/pages/auth-theme.css               |   5 +
+ server/src/pages/blocks/Layout.test.tsx       |  15 ++
+ server/src/pages/blocks/Layout.tsx            |  16 +-
+ .../src/pages/hooks/useCurrentView.test.tsx   |  14 ++
+ server/src/pages/hooks/useCurrentView.ts      |   7 +-
+ .../src/pages/hooks/useInitialProps.test.ts   |   3 +
+ server/src/pages/hooks/useInitialProps.ts     |   2 +
+ server/src/pages/tools/hostedLocale.test.ts   |  25 +++
+ server/src/pages/tools/locale.ts              |  10 +
+ server/src/pages/tools/param.test.ts          |   6 +-
+ server/src/pages/tools/param.ts               |  11 +-
+ server/src/pages/tools/request.test.ts        |  15 +-
+ server/src/pages/tools/request.ts             |   9 +-
+ server/src/routes/oauth.tsx                   |   3 +
+ server/src/services/jwt.ts                    |  32 ++-
+ server/src/services/jwtSigning.test.ts        | 100 ++++++++++
+ 36 files changed, 513 insertions(+), 75 deletions(-)
+ create mode 100644 server/src/__tests__/normal/hosted-login.test.ts
+ create mode 100644 server/src/pages/tools/hostedLocale.test.ts
+ create mode 100644 server/src/services/jwtSigning.test.ts
+
+diff --git a/server/src/__tests__/key-rotate/jwt.test.ts b/server/src/__tests__/key-rotate/jwt.test.ts
+index f6017910fef9353fdfb2072a895e82f5b58ac4fe..4ad24a59d6a48d6d3b0b5d619f4a70bd991a6d92 100644
+--- a/server/src/__tests__/key-rotate/jwt.test.ts
++++ b/server/src/__tests__/key-rotate/jwt.test.ts
+@@ -120,6 +120,8 @@ describe(
+         await createNewRole()
+         const appRecord = await db.prepare('SELECT * FROM app where id = 2').get() as appModel.Record
+         const payload = {
++          // This fixture represents the S2S client, not a user with the same subject.
++          tokenType: 'service',
+           sub: appRecord.clientId,
+           azp: appRecord.clientId,
+           iss: 'http://localhost:8787',
+@@ -175,6 +177,7 @@ describe(
+           { headers: { Authorization: `Bearer ${accessToken}` } },
+           mock(db),
+         )
++        expect(res.status).toBe(200)
+         const json = await res.json() as { roles: roleModel.Record[] }
+ 
+         expect(json.roles.length).toBe(2)
+diff --git a/server/src/__tests__/normal/hosted-login.test.ts b/server/src/__tests__/normal/hosted-login.test.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..1fd06957caf64ea210b0bdf2701c52de32a3131d
+--- /dev/null
++++ b/server/src/__tests__/normal/hosted-login.test.ts
+@@ -0,0 +1,185 @@
++import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
++import type { Database } from 'better-sqlite3'
++import app from 'index'
++import { appService, brandingService, kvService, scopeService, sessionService } from 'services'
++import { migrate, mock, mockedKV, sessionStore } from 'tests/mock'
++import { getApp, getAuthorizeParams, insertUsers, postSignInRequest } from 'tests/identity'
++import { routeConfig } from 'configs'
++import { decode, verify } from 'hono/jwt'
++
++let db: Database
++beforeEach(async () => { db = await migrate() })
++afterEach(async () => {
++  vi.restoreAllMocks()
++  await db.close()
++  await mockedKV.empty()
++  Object.keys(sessionStore).forEach((key) => delete sessionStore[key])
++})
++
++const login = async (change?: (params: URLSearchParams) => void, json = false) => {
++  const params = new URLSearchParams(await getAuthorizeParams(await getApp(db)))
++  change?.(params)
++  return app.request(`/login?${params}`, json ? { headers: { Accept: 'application/json' } } : {}, mock(db))
++}
++
++describe('shared hosted login panel', () => {
++  test('renders in one response with one validated client/scope/branding read', async () => {
++    const client = vi.spyOn(appService, 'verifySPAClientRequest')
++    const scopes = vi.spyOn(scopeService, 'verifyAppScopes')
++    const branding = vi.spyOn(brandingService, 'getBranding')
++    const session = vi.spyOn(sessionService, 'getAuthInfoSession')
++    const res = await login()
++    expect(res.status).toBe(200)
++    expect(res.headers.get('Location')).toBeNull()
++    expect(res.headers.get('Cache-Control')).toBe('no-store')
++    expect(res.headers.get('Referrer-Policy')).toBe('no-referrer')
++    const html = await res.text()
++    expect(html).toContain('appName: "Admin Panel (SPA)"')
++    expect(html).toContain('redirectOrigin: "http://localhost:3000"')
++    expect(html).not.toContain('fonts.googleapis.com')
++    expect(html).not.toContain('fonts.gstatic.com')
++    expect(client).toHaveBeenCalledTimes(1)
++    expect(scopes).toHaveBeenCalledTimes(1)
++    expect(branding).toHaveBeenCalledTimes(1)
++    expect(session).toHaveBeenCalledTimes(1)
++  })
++
++  test('JSON configuration has the same trusted application context', async () => {
++    const res = await login((p) => p.set('appName', 'UNTRUSTED'), true)
++    expect(res.status).toBe(200)
++    expect(res.headers.get('Cache-Control')).toBe('no-store')
++    const body = await res.json() as { initialProps: Record<string, unknown> }
++    expect(body.initialProps.appName).toBe('Admin Panel (SPA)')
++    expect(body.initialProps.redirectOrigin).toBe('http://localhost:3000')
++    expect(body.initialProps).not.toHaveProperty('clientSecret')
++  })
++
++  test.each(['client_id', 'redirect_uri', 'code_challenge_method', 'response_type', 'state', 'code_challenge'])(
++    'rejects invalid %s before rendering', async (field) => {
++      const res = await login((p) => p.set(field, field === 'state' || field === 'code_challenge' ? '' : 'invalid'))
++      expect(res.status).toBeGreaterThanOrEqual(400)
++      expect(await res.text()).not.toContain('window.__initialProps')
++    },
++  )
++
++  test('rejects a disabled application', async () => {
++    await db.prepare('UPDATE app SET "isActive" = 0 WHERE id = 1').run()
++    expect((await login()).status).toBeGreaterThanOrEqual(400)
++  })
++
++  test('application metadata cannot terminate the initial-props script', async () => {
++    await db.prepare('UPDATE app SET name = ? WHERE id = 1').run('</script><img src=x onerror=alert(1)>')
++    const html = await (await login()).text()
++    expect(html).toContain('appName: "\\u003c/script>\\u003cimg')
++    expect(html).not.toContain('</script><img src=x')
++  })
++
++  test('preserves custom organization fonts rather than overwriting branding', async () => {
++    const original = brandingService.getBranding
++    vi.spyOn(brandingService, 'getBranding').mockImplementation(async (...args) => ({
++      ...await original(...args), fontFamily: 'Custom', fontUrl: 'https://example.com/font.css',
++    }))
++    expect(await (await login()).text()).toContain('<link href="https://example.com/font.css" rel="stylesheet"/>')
++  })
++
++  test.each([
++    ['/callback', ''],
++    ['myapp://callback', 'myapp:'],
++    ['https://app.example.com/callback?source=desktop', 'https://app.example.com'],
++  ])('display metadata does not reject registered callback %s', async (redirect, origin) => {
++    await db.prepare('UPDATE app SET "redirectUris" = ? WHERE id = 1').run(redirect)
++    const res = await login((p) => p.set('redirect_uri', redirect), true)
++    expect(res.status).toBe(200)
++    const body = await res.json() as { initialProps: Record<string, unknown> }
++    expect(body.initialProps.redirectOrigin).toBe(origin)
++  })
++
++  test('keeps the existing OIDC authorize redirect contract', async () => {
++    const params = await getAuthorizeParams(await getApp(db))
++    const res = await app.request(`${routeConfig.OauthRoute.Authorize}${params}`, {}, mock(db))
++    expect(res.status).toBe(302)
++    expect(res.headers.get('Location')).toBe(`${routeConfig.IdentityRoute.AuthorizeView}${params}`)
++  })
++
++  test('external provider policies still leave through the original handler', async () => {
++    const previous = process.env.ENABLE_SAML_SSO_AS_SP
++    try {
++      process.env.ENABLE_SAML_SSO_AS_SP = true as unknown as string
++      const res = await login((p) => p.set('policy', 'saml_sso_test'))
++      expect(res.status).toBe(302)
++      expect(res.headers.get('Location')).toContain(`${routeConfig.InternalRoute.SamlSp}/login?`)
++    } finally { process.env.ENABLE_SAML_SSO_AS_SP = previous }
++  })
++
++  test('reuses a valid SSO session and issues verifiable access/ID tokens with one key load', async () => {
++    const previous = process.env.ENFORCE_ONE_MFA_ENROLLMENT
++    try {
++      process.env.ENFORCE_ONE_MFA_ENROLLMENT = [] as unknown as string
++      insertUsers(db)
++      expect((await postSignInRequest(db, await getApp(db))).status).toBe(200)
++      const res = await login()
++      expect(res.status).toBe(302)
++      const callback = new URL(res.headers.get('Location')!)
++      expect(callback.origin).toBe('http://localhost:3000')
++      expect(callback.searchParams.get('state')).toBe('123')
++      const privateRead = vi.spyOn(kvService, 'getJwtPrivateSecret')
++      const publicRead = vi.spyOn(kvService, 'getJwtPublicSecret')
++      const tokenRes = await app.request(routeConfig.OauthRoute.Token, {
++        method: 'POST',
++        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
++        body: new URLSearchParams({ grant_type: 'authorization_code', code: callback.searchParams.get('code')!, code_verifier: 'abc' }),
++      }, mock(db))
++      expect(tokenRes.status).toBe(200)
++      const tokens = await tokenRes.json() as { access_token: string; id_token: string }
++      expect(privateRead).toHaveBeenCalledTimes(1)
++      expect(publicRead).toHaveBeenCalledTimes(1)
++      const publicKey = await publicRead.mock.results[0].value
++      expect((await verify(tokens.access_token, publicKey, 'RS256')).sub).toBe('1-1-1-1')
++      expect((await verify(tokens.id_token, publicKey, 'RS256')).sub).toBe('1-1-1-1')
++      expect(decode(tokens.access_token).header).toEqual(decode(tokens.id_token).header)
++    } finally { process.env.ENFORCE_ONE_MFA_ENROLLMENT = previous }
++  })
++
++  test.each(['signup', 'reset'])('explicit screen=%s does not silently use SSO', async (screen) => {
++    const previous = process.env.ENFORCE_ONE_MFA_ENROLLMENT
++    try {
++      process.env.ENFORCE_ONE_MFA_ENROLLMENT = [] as unknown as string
++      insertUsers(db)
++      await postSignInRequest(db, await getApp(db))
++      expect((await login()).status).toBe(302)
++      const res = await login((p) => p.set('screen', screen))
++      expect(res.status).toBe(200)
++      expect(res.headers.get('Location')).toBeNull()
++    } finally { process.env.ENFORCE_ONE_MFA_ENROLLMENT = previous }
++  })
++
++  test('a revoked session cannot skip the panel', async () => {
++    const previous = process.env.ENFORCE_ONE_MFA_ENROLLMENT
++    try {
++      process.env.ENFORCE_ONE_MFA_ENROLLMENT = [] as unknown as string
++      insertUsers(db)
++      await postSignInRequest(db, await getApp(db))
++      await db.prepare('UPDATE "user" SET "securityVersion" = "securityVersion" + 1').run()
++      expect((await login()).status).toBe(200)
++    } finally { process.env.ENFORCE_ONE_MFA_ENROLLMENT = previous }
++  })
++
++  test('SSO preserves registered callback query and round-trips encoded state', async () => {
++    const previous = process.env.ENFORCE_ONE_MFA_ENROLLMENT
++    try {
++      process.env.ENFORCE_ONE_MFA_ENROLLMENT = [] as unknown as string
++      insertUsers(db)
++      await postSignInRequest(db, await getApp(db))
++      const redirect = 'http://localhost:3000/en/dashboard?source=desktop'
++      await db.prepare('UPDATE app SET "redirectUris" = ? WHERE id = 1').run(redirect)
++      const state = 'nonce+with&reserved=#and?marks'
++      const res = await login((p) => { p.set('redirect_uri', redirect); p.set('state', state) })
++      expect(res.status).toBe(302)
++      const callback = new URL(res.headers.get('Location')!)
++      expect(callback.searchParams.get('source')).toBe('desktop')
++      expect(callback.searchParams.getAll('state')).toEqual([state])
++      expect(callback.searchParams.getAll('code')).toHaveLength(1)
++      expect(callback.hash).toBe('')
++    } finally { process.env.ENFORCE_ONE_MFA_ENROLLMENT = previous }
++  })
++})
+diff --git a/server/src/__tests__/normal/identity-main/authorize-view.test.ts b/server/src/__tests__/normal/identity-main/authorize-view.test.ts
+index a649c3daaefb4392adf0b2c7c7563ad194f692c0..42f2d62fee6bbc73dc0c97b33b912d614f449f6f 100644
+--- a/server/src/__tests__/normal/identity-main/authorize-view.test.ts
++++ b/server/src/__tests__/normal/identity-main/authorize-view.test.ts
+@@ -90,10 +90,9 @@ describe(
+         expect(html).toContain(`privacyPolicyLink: "${process.env.PRIVACY_POLICY_LINK}"`)
+         expect(html).toContain(`allowPasskey: ${process.env.ALLOW_PASSKEY_ENROLLMENT}`)
+         expect(html).toContain(`<link rel="icon" type="image/x-icon" href="${process.env.COMPANY_LOGO_URL}"/>`)
+-        expect(html).toContain(`<link href="${variableConfig.DefaultBranding.FontUrl?.replace(
+-          '&',
+-          '&amp;',
+-        )}" rel="stylesheet"/>`)
++        expect(variableConfig.DefaultBranding.FontUrl).toBe('')
++        expect(html).not.toContain('fonts.googleapis.com')
++        expect(html).not.toContain('<link href="" rel="stylesheet"/>')
+         expect(html).toContain(`--layout-color:${variableConfig.DefaultBranding.LayoutColor}`)
+         expect(html).toContain(`--label-color:${variableConfig.DefaultBranding.LabelColor}`)
+         expect(html).toContain(`--font-default:${variableConfig.DefaultBranding.FontFamily}`)
+diff --git a/server/src/__tests__/normal/identity-main/process-view.test.ts b/server/src/__tests__/normal/identity-main/process-view.test.ts
+index ab29bce16e73a587309407e1454463469265c889..00be8caaaf981758625ef7922a3f2cd373368409 100644
+--- a/server/src/__tests__/normal/identity-main/process-view.test.ts
++++ b/server/src/__tests__/normal/identity-main/process-view.test.ts
+@@ -48,10 +48,9 @@ describe(
+         expect(html).toContain(`enablePasswordlessSignIn: ${process.env.ENABLE_PASSWORDLESS_SIGN_IN}`)
+         expect(html).toContain(`usePasswordlessAsMagicLink: ${process.env.USE_PASSWORDLESS_AS_MAGIC_LINK ?? false}`)
+         expect(html).toContain(`<link rel="icon" type="image/x-icon" href="${process.env.COMPANY_LOGO_URL}"/>`)
+-        expect(html).toContain(`<link href="${variableConfig.DefaultBranding.FontUrl?.replace(
+-          '&',
+-          '&amp;',
+-        )}" rel="stylesheet"/>`)
++        expect(variableConfig.DefaultBranding.FontUrl).toBe('')
++        expect(html).not.toContain('fonts.googleapis.com')
++        expect(html).not.toContain('<link href="" rel="stylesheet"/>')
+         expect(html).toContain(`--layout-color:${variableConfig.DefaultBranding.LayoutColor}`)
+         expect(html).toContain(`--label-color:${variableConfig.DefaultBranding.LabelColor}`)
+         expect(html).toContain(`--font-default:${variableConfig.DefaultBranding.FontFamily}`)
+diff --git a/server/src/__tests__/normal/identity-other/auth-code-expired.test.ts b/server/src/__tests__/normal/identity-other/auth-code-expired.test.ts
+index 0f03e7ec19aa1b3c3912ebba57d35c35946beb25..916de75e8fb35d7c500245cd3814d4ea87b1d5d6 100644
+--- a/server/src/__tests__/normal/identity-other/auth-code-expired.test.ts
++++ b/server/src/__tests__/normal/identity-other/auth-code-expired.test.ts
+@@ -40,10 +40,9 @@ describe(
+         expect(html).toContain(`logoUrl: "${process.env.COMPANY_LOGO_URL}"`)
+         expect(html).toContain(`enableLocaleSelector: ${process.env.ENABLE_LOCALE_SELECTOR}`)
+         expect(html).toContain(`<link rel="icon" type="image/x-icon" href="${process.env.COMPANY_LOGO_URL}"/>`)
+-        expect(html).toContain(`<link href="${variableConfig.DefaultBranding.FontUrl?.replace(
+-          '&',
+-          '&amp;',
+-        )}" rel="stylesheet"/>`)
++        expect(variableConfig.DefaultBranding.FontUrl).toBe('')
++        expect(html).not.toContain('fonts.googleapis.com')
++        expect(html).not.toContain('<link href="" rel="stylesheet"/>')
+         expect(html).toContain(`--layout-color:${variableConfig.DefaultBranding.LayoutColor}`)
+         expect(html).toContain(`--label-color:${variableConfig.DefaultBranding.LabelColor}`)
+         expect(html).toContain(`--font-default:${variableConfig.DefaultBranding.FontFamily}`)
+diff --git a/server/src/__tests__/normal/identity-other/verify-email.test.ts b/server/src/__tests__/normal/identity-other/verify-email.test.ts
+index 8b73b5c1331d9393a85e29bee3cfb1a061d1b468..269bfe739c39435ca2d16b1ad02afb46efbe9e13 100644
+--- a/server/src/__tests__/normal/identity-other/verify-email.test.ts
++++ b/server/src/__tests__/normal/identity-other/verify-email.test.ts
+@@ -126,10 +126,9 @@ describe(
+         expect(html).toContain(`logoUrl: "${process.env.COMPANY_LOGO_URL}"`)
+         expect(html).toContain(`enableLocaleSelector: ${process.env.ENABLE_LOCALE_SELECTOR}`)
+         expect(html).toContain(`<link rel="icon" type="image/x-icon" href="${process.env.COMPANY_LOGO_URL}"/>`)
+-        expect(html).toContain(`<link href="${variableConfig.DefaultBranding.FontUrl?.replace(
+-          '&',
+-          '&amp;',
+-        )}" rel="stylesheet"/>`)
++        expect(variableConfig.DefaultBranding.FontUrl).toBe('')
++        expect(html).not.toContain('fonts.googleapis.com')
++        expect(html).not.toContain('<link href="" rel="stylesheet"/>')
+         expect(html).toContain(`--layout-color:${variableConfig.DefaultBranding.LayoutColor}`)
+         expect(html).toContain(`--label-color:${variableConfig.DefaultBranding.LabelColor}`)
+         expect(html).toContain(`--font-default:${variableConfig.DefaultBranding.FontFamily}`)
+diff --git a/server/src/__tests__/normal/identity-policy/change-email.test.ts b/server/src/__tests__/normal/identity-policy/change-email.test.ts
+index 59dde9e2385bf88776ba6c06cc512d607fdd0f07..93654608551664da40a59235576b61fff4ac2547 100644
+--- a/server/src/__tests__/normal/identity-policy/change-email.test.ts
++++ b/server/src/__tests__/normal/identity-policy/change-email.test.ts
+@@ -258,7 +258,7 @@ describe(
+         global.process.env.GOOGLE_AUTH_CLIENT_ID = '123'
+         const publicKey = await mockedKV.get(adapterConfig.BaseKVKey.JwtPublicSecret)
+         const jwk = await cryptoUtil.secretToJwk(publicKey ?? '')
+-        const c = { env: { KV: mockedKV } } as unknown as Context<typeConfig.Context>
++        const c = new Context<typeConfig.Context>(new Request('http://localhost'), { env: { KV: mockedKV } as unknown as typeConfig.Bindings })
+         const credential = await jwtService.signWithKid(
+           c,
+           {
+diff --git a/server/src/__tests__/normal/identity-social/authorize-apple.test.ts b/server/src/__tests__/normal/identity-social/authorize-apple.test.ts
+index b03a5567a5e94349405e0b52cae6742c7e2f7abd..e0ae5d07a374f7b7ae25979c9fb63e1aae8c9665 100644
+--- a/server/src/__tests__/normal/identity-social/authorize-apple.test.ts
++++ b/server/src/__tests__/normal/identity-social/authorize-apple.test.ts
+@@ -42,7 +42,7 @@ describe(
+       url, params,
+     ) => {
+       if (url === 'https://appleid.apple.com/auth/token' && params.body.get('code') === 'aaa') {
+-        const c = { env: { KV: mockedKV } } as unknown as Context<typeConfig.Context>
++        const c = new Context<typeConfig.Context>(new Request('http://localhost'), { env: { KV: mockedKV } as unknown as typeConfig.Bindings })
+         const idToken = await jwtService.signWithKid(
+           c,
+           {
+diff --git a/server/src/__tests__/normal/identity-social/authorize-google.test.ts b/server/src/__tests__/normal/identity-social/authorize-google.test.ts
+index 17dba364c2bc25a4b9767d40410e60728c112f92..d74b5343550d55c75579305a1aa0c93c98193bda 100644
+--- a/server/src/__tests__/normal/identity-social/authorize-google.test.ts
++++ b/server/src/__tests__/normal/identity-social/authorize-google.test.ts
+@@ -39,7 +39,7 @@ const prepareRequest = async (
+ ) => {
+   const publicKey = await mockedKV.get(adapterConfig.BaseKVKey.JwtPublicSecret)
+   const jwk = await cryptoUtil.secretToJwk(publicKey ?? '')
+-  const c = { env: { KV: mockedKV } } as unknown as Context<typeConfig.Context>
++  const c = new Context<typeConfig.Context>(new Request('http://localhost'), { env: { KV: mockedKV } as unknown as typeConfig.Bindings })
+   const credential = await jwtService.signWithKid(
+     c,
+     {
+@@ -205,7 +205,7 @@ describe(
+       'could throw error if wrong credential provided',
+       async () => {
+         global.process.env.GOOGLE_AUTH_CLIENT_ID = '123'
+-        const c = { env: { KV: mockedKV } } as unknown as Context<typeConfig.Context>
++        const c = new Context<typeConfig.Context>(new Request('http://localhost'), { env: { KV: mockedKV } as unknown as typeConfig.Bindings })
+         const credential = await jwtService.signWithKid(
+           c,
+           {
+diff --git a/server/src/__tests__/normal/identity-social/authorize-oidc.test.ts b/server/src/__tests__/normal/identity-social/authorize-oidc.test.ts
+index 8c7ed252605325fbf2673bde8ae301b9799282b4..6c4dc8fa301e46dadcd6ab0d424124d33e7c4188 100644
+--- a/server/src/__tests__/normal/identity-social/authorize-oidc.test.ts
++++ b/server/src/__tests__/normal/identity-social/authorize-oidc.test.ts
+@@ -88,7 +88,7 @@ describe(
+     } = {}) => {
+       const publicKey = await mockedKV.get(adapterConfig.BaseKVKey.JwtPublicSecret)
+       const jwk = await cryptoUtil.secretToJwk(publicKey ?? '')
+-      const c = { env: { KV: mockedKV } } as unknown as Context<typeConfig.Context>
++      const c = new Context<typeConfig.Context>(new Request('http://localhost'), { env: { KV: mockedKV } as unknown as typeConfig.Bindings })
+       const idToken = await jwtService.signWithKid(
+         c,
+         {
+diff --git a/server/src/__tests__/normal/jwt.test.ts b/server/src/__tests__/normal/jwt.test.ts
+index 1f6029e8c7f7a61383e9d8fd49e68bd747c17bf0..6dffdf31355ca1ea8f59207f3b81cf0a9b9ec45d 100644
+--- a/server/src/__tests__/normal/jwt.test.ts
++++ b/server/src/__tests__/normal/jwt.test.ts
+@@ -2,10 +2,11 @@ import {
+   afterEach, beforeEach, describe, expect, test,
+ } from 'vitest'
+ import { Database } from 'better-sqlite3'
++import { Context } from 'hono'
+ import { Scope } from '@melody-auth/shared'
+ import app from 'index'
+ import {
+-  messageConfig, routeConfig,
++  messageConfig, routeConfig, typeConfig,
+ } from 'configs'
+ import {
+   migrate, mock,
+@@ -31,7 +32,7 @@ const validIssuer = 'http://localhost:8787'
+ // signature and kid. The claims themselves are arbitrary, which lets each test
+ // craft tokens that differ from a real access token only in the dimension under test.
+ const signToken = async (payload: object) => jwtService.signWithKid(
+-  { env: mock(db) } as never,
++  new Context<typeConfig.Context>(new Request('http://localhost'), { env: mock(db) as unknown as typeConfig.Bindings }),
+   payload,
+ )
+ 
+diff --git a/server/src/__tests__/normal/request-latency.test.ts b/server/src/__tests__/normal/request-latency.test.ts
+index 7304969c1bca0f830420ecd08efac6909da1c367..2bcde67cdc12003ea17c29da20c04eaa9c796874 100644
+--- a/server/src/__tests__/normal/request-latency.test.ts
++++ b/server/src/__tests__/normal/request-latency.test.ts
+@@ -39,7 +39,7 @@ describe('stateless request session budget', () => {
+     expect(response.headers.get('Set-Cookie')).toBeNull()
+   })
+ 
+-  it.each([routeConfig.OauthRoute.Authorize, routeConfig.OauthRoute.Logout,
++  it.each([routeConfig.OauthRoute.Login, routeConfig.OauthRoute.Authorize, routeConfig.OauthRoute.Logout,
+     routeConfig.IdentityRoute.Logout, routeConfig.IdentityRoute.AuthorizeAccount,
+     routeConfig.IdentityRoute.AuthorizePassword, routeConfig.IdentityRoute.ProcessEmailMfa,
+     routeConfig.IdentityRoute.ProcessPasswordlessCode, routeConfig.IdentityRoute.ProcessOtpMfa,
+@@ -54,7 +54,7 @@ describe('stateless request session budget', () => {
+     expect(secret).toHaveBeenCalledOnce()
+   })
+ 
+-  it('retains the encrypted SSO cookie through an intervening stateless view', async () => {
++  it.each([routeConfig.OauthRoute.Authorize, routeConfig.OauthRoute.Login])('retains the encrypted SSO cookie through an intervening stateless view at %s', async (authorizePath) => {
+     vi.spyOn(kvService, 'getSessionSecret').mockResolvedValue('test-session-key-with-at-least-32-characters')
+     const app = new Hono<typeConfig.Context>()
+     app.use('*', session)
+@@ -63,7 +63,7 @@ describe('stateless request session budget', () => {
+       return c.text('signed in')
+     })
+     app.get('/account', (c) => c.text('stateless'))
+-    app.get(routeConfig.OauthRoute.Authorize, (c) => c.text(c.get('session').get('authId') as string))
++    app.get(authorizePath, (c) => c.text(c.get('session').get('authId') as string))
+     const env = { SERVER_SESSION_EXPIRES_IN: 1800 } as typeConfig.Bindings
+     const signedIn = await app.request(routeConfig.IdentityRoute.AuthorizeAccount, {}, env)
+     expect(signedIn.status).toBe(200)
+@@ -72,7 +72,7 @@ describe('stateless request session budget', () => {
+     expect(cookie).toBeTruthy()
+     const view = await app.request('/account', { headers: { Cookie: cookie } }, env)
+     expect(view.headers.get('Set-Cookie')).toBeNull()
+-    const authorized = await app.request(routeConfig.OauthRoute.Authorize, { headers: { Cookie: cookie } }, env)
++    const authorized = await app.request(authorizePath, { headers: { Cookie: cookie } }, env)
+     expect(authorized.status).toBe(200)
+     expect(await authorized.text()).toBe('test-subject')
+   })
+diff --git a/server/src/__tests__/normal/s2s/app.test.ts b/server/src/__tests__/normal/s2s/app.test.ts
+index 08527230a8485f20f979e3348633691057f127c3..f8925486bb616aab81281304689bb4b3c24d69f5 100644
+--- a/server/src/__tests__/normal/s2s/app.test.ts
++++ b/server/src/__tests__/normal/s2s/app.test.ts
+@@ -2,10 +2,11 @@ import {
+   afterEach, beforeEach, describe, expect, test,
+ } from 'vitest'
+ import { Database } from 'better-sqlite3'
++import { Context } from 'hono'
+ import { Scope } from '@melody-auth/shared'
+ import app from 'index'
+ import {
+-  messageConfig, routeConfig,
++  messageConfig, routeConfig, typeConfig,
+ } from 'configs'
+ import {
+   migrate, mock,
+@@ -35,7 +36,7 @@ const getSpaTokenWithScope = async (scope: string) => {
+   const currentTimestamp = timeUtil.getCurrentTimestamp()
+ 
+   return jwtService.signWithKid(
+-    { env: mock(db) } as never,
++    new Context<typeConfig.Context>(new Request('http://localhost'), { env: mock(db) as unknown as typeConfig.Bindings }),
+     {
+       sub: '1-1-1-1',
+       azp: appRecord.clientId,
+diff --git a/server/src/configs/route.ts b/server/src/configs/route.ts
+index 8cac5db62c7ebc8fafeb51b409fdd9339d4db018..bfec650f352348459aeb80bd161334d5f95adac5 100644
+--- a/server/src/configs/route.ts
++++ b/server/src/configs/route.ts
+@@ -16,6 +16,7 @@ export enum InternalRoute {
+ }
+ 
+ export enum OauthRoute {
++  Login = '/login',
+   Authorize = `${InternalRoute.OAuth}/authorize`,
+   Token = `${InternalRoute.OAuth}/token`,
+   Userinfo = `${InternalRoute.OAuth}/userinfo`,
+diff --git a/server/src/configs/type.ts b/server/src/configs/type.ts
+index 4e82e5327aefb0249e76e3417947e422efc9c205..28f1a6dcaecd0516fc32bcff1136ce00d6a20ab7 100644
+--- a/server/src/configs/type.ts
++++ b/server/src/configs/type.ts
+@@ -114,6 +114,7 @@ export type Context = {
+   Variables: {
+     access_token_body?: typeConfig.AccessTokenBody;
+     verified_access_user?: { token: typeConfig.AccessTokenBody; user: userModel.Record };
++    jwt_signing_material?: Promise<{ key: CryptoKey; kid: string }>;
+     basic_auth_body?: typeConfig.BasicAuthBody;
+     session: Session;
+     session_key_rotation: boolean;
+diff --git a/server/src/configs/variable.ts b/server/src/configs/variable.ts
+index 0075381a627f6b06885a4dd4c82d25d8ba2ec98d..d298cedd64e647d3137af562261cd30e7bc6e080 100644
+--- a/server/src/configs/variable.ts
++++ b/server/src/configs/variable.ts
+@@ -3,8 +3,8 @@ import {
+ } from '@melody-auth/shared'
+ 
+ export enum DefaultBranding {
+-  FontFamily = 'Inter',
+-  FontUrl = 'https://fonts.googleapis.com/css2?family=Inter:wght@400..600&display=swap',
++  FontFamily = 'system-ui',
++  FontUrl = '',
+   LayoutColor = '#06080d',
+   LabelColor = '#f7f8ef',
+   PrimaryButtonColor = '#d9ff38',
+diff --git a/server/src/handlers/identity/view.tsx b/server/src/handlers/identity/view.tsx
+index 54ed840b1bec62c3803fb7bb81ce073b8659dff7..31b7aea5ee9e5a4b9859164f1159e8479a911414 100644
+--- a/server/src/handlers/identity/view.tsx
++++ b/server/src/handlers/identity/view.tsx
+@@ -41,15 +41,18 @@ const viewRender = async (
+   const neuroSurfaces = branding.layoutColor === variableConfig.DefaultBranding.LayoutColor
+     && branding.labelColor === variableConfig.DefaultBranding.LabelColor
+ 
++  c.header('Cache-Control', 'no-store')
++  c.header('Referrer-Policy', 'no-referrer')
++
+   return c.html(<html lang={locale}>
+     <head>
+       <meta charset='utf-8' />
+       <title>{localeConfig.common.documentTitle[locale]}</title>
+-      <link
++      {branding.logoUrl && <link
+         rel='icon'
+         type='image/x-icon'
+         href={branding.logoUrl}
+-      />
++      />}
+       <meta
+         name='viewport'
+         content='width=device-width, initial-scale=1'
+@@ -67,18 +70,10 @@ const viewRender = async (
+             href='/client.css'
+           />
+         )}
+-      <link
+-        rel='preconnect'
+-        href='https://fonts.googleapis.com'
+-      />
+-      <link
+-        rel='preconnect'
+-        href='https://fonts.gstatic.com'
+-      />
+-      <link
++      {branding.fontUrl && <link
+         href={branding.fontUrl}
+         rel='stylesheet'
+-      />
++      />}
+       <Style>
+         {css`
+           :root {
+@@ -123,8 +118,14 @@ const viewRender = async (
+ }
+ 
+ export const getAuthorizeView = async (c: Context<typeConfig.Context>) => {
+-  const { queryDto } = await oauthHandler.parseGetAuthorizeDto(c)
++  return renderAuthorizeView(c, await oauthHandler.parseGetAuthorizeDto(c))
++}
+ 
++// Only callers holding a validated authorization may use this rendering seam.
++export const renderAuthorizeView = async (
++  c: Context<typeConfig.Context>,
++  { queryDto, app }: Awaited<ReturnType<typeof oauthHandler.parseGetAuthorizeDto>>,
++) => {
+   const {
+     ENABLE_SIGN_UP: allowSignUp,
+     ENABLE_PASSWORD_RESET: allowPasswordReset,
+@@ -172,8 +173,16 @@ export const getAuthorizeView = async (c: Context<typeConfig.Context>) => {
+     queryDto.org,
+   )
+ 
++  // Display-only metadata must not narrow the existing registered redirect contract.
++  // Relative callbacks have no separate origin; native schemes show their scheme.
++  let redirectOrigin = ''
++  try {
++    const redirect = new URL(queryDto.redirectUri)
++    redirectOrigin = redirect.origin === 'null' ? redirect.protocol : redirect.origin
++  } catch { /* Keep legacy relative callbacks valid; do not show a fabricated host. */ }
+   const initialProps = {
+     locales: locales.join(','), logoUrl: branding.logoUrl,
++    appName: app.name, redirectOrigin,
+     enableLocaleSelector, enablePasswordReset, enableSignUp, enablePasswordSignIn,
+     enablePasswordlessSignIn, usePasswordlessAsMagicLink: usePasswordlessAsMagicLink ?? false,
+     enableMfaRememberDevice, enableAppBanner, googleClientId, facebookClientId,
+@@ -237,6 +246,7 @@ export const getProcessView = async (c: Context<typeConfig.Context>) => {
+     propsScript,
+     queryDto.locale,
+     queryDto.org,
++    branding,
+   )
+ }
+ 
+@@ -281,6 +291,7 @@ export const getVerifyEmailView = async (c: Context<typeConfig.Context>) => {
+     propsScript,
+     queryDto.locale,
+     queryDto.org,
++    branding,
+   )
+ }
+ 
+@@ -321,5 +332,6 @@ export const getAuthCodeExpiredView = async (c: Context<typeConfig.Context>) =>
+     propsScript,
+     queryDto.locale,
+     queryDto.org,
++    branding,
+   )
+ }
+diff --git a/server/src/handlers/oauth.tsx b/server/src/handlers/oauth.tsx
+index e15e7546d617e8b57ab0cec370b1e1a0cada951f..09cf6104e0dce1a7bea226a79469cd0a948b1bdf 100644
+--- a/server/src/handlers/oauth.tsx
++++ b/server/src/handlers/oauth.tsx
+@@ -20,6 +20,7 @@ import {
+ } from 'hooks'
+ import { appModel } from 'models'
+ import { prepareOidcRedirect } from 'services/identity'
++import { renderAuthorizeView } from './identity/view'
+ 
+ export const parseGetAuthorizeDto = async (c: Context<typeConfig.Context>): Promise<{
+   queryDto: oauthDto.GetAuthorizeDto;
+@@ -86,13 +87,18 @@ export const createFullAuthorize = async (
+ }
+ 
+ export const getAuthorize = async (c: Context<typeConfig.Context>) => {
+-  const { queryDto } = await parseGetAuthorizeDto(c)
++  c.header('Cache-Control', 'no-store')
++  c.header('Referrer-Policy', 'no-referrer')
++  const authorization = await parseGetAuthorizeDto(c)
++  const { queryDto } = authorization
+   const stored = await sessionService.getAuthInfoSession(
+     c,
+     queryDto.clientId,
+   )
+ 
+-  if (stored && stored.request.clientId === queryDto.clientId) {
++  const screen = c.req.query('screen')
++  const explicitForm = c.req.path === routeConfig.OauthRoute.Login && (screen === 'signup' || screen === 'reset')
++  if (!explicitForm && stored && stored.request.clientId === queryDto.clientId) {
+     const authCode = await createFullAuthorize(
+       c,
+       {
+@@ -115,8 +121,10 @@ export const getAuthorize = async (c: Context<typeConfig.Context>) => {
+           queryDto={queryDto}
+         />)
+       } else {
+-        const url = `${queryDto.redirectUri}?code=${authCode}&state=${queryDto.state}`
+-        return c.redirect(url)
++        const url = new URL(queryDto.redirectUri, c.req.url)
++        url.searchParams.set('code', authCode)
++        url.searchParams.set('state', queryDto.state)
++        return c.redirect(url.href)
+       }
+     } else {
+       const queryString = `step=${queryDto.policy}&state=${queryDto.state}&code=${authCode}&locale=${queryDto.locale}&redirect_uri=${queryDto.redirectUri}&org=${queryDto.org}`
+@@ -145,6 +153,9 @@ export const getAuthorize = async (c: Context<typeConfig.Context>) => {
+     return c.redirect(url)
+   }
+ 
++  // Keep the existing OIDC redirect contract, but avoid a second HTTP request and
++  // duplicate client/scope reads for applications using the shared login panel.
++  if (c.req.path === routeConfig.OauthRoute.Login) return renderAuthorizeView(c, authorization)
+   return c.redirect(`${routeConfig.IdentityRoute.AuthorizeView}?${queryString}`)
+ }
+ 
+diff --git a/server/src/handlers/other.ts b/server/src/handlers/other.ts
+index f0e1b7ed5b23de4b304df87467237854490b2250..fd2e395416388af959e5873d9005ec16dc7768b7 100644
+--- a/server/src/handlers/other.ts
++++ b/server/src/handlers/other.ts
+@@ -102,11 +102,13 @@ export const getOpenidConfig = async (c: Context<typeConfig.Context>) => {
+ }
+ 
+ export const getJwks = async (c: Context<typeConfig.Context>) => {
+-  const publicKey = await kvService.getJwtPublicSecret(c)
++  const [publicKey, deprecatedPublicKey] = await Promise.all([
++    kvService.getJwtPublicSecret(c),
++    kvService.getDeprecatedPublicSecret(c.env.KV),
++  ])
+   const keys = []
+   const jwk = await cryptoUtil.secretToJwk(publicKey)
+   keys.push(jwk)
+-  const deprecatedPublicKey = await kvService.getDeprecatedPublicSecret(c.env.KV)
+   if (deprecatedPublicKey) {
+     const deprecatedJwk = await cryptoUtil.secretToJwk(deprecatedPublicKey)
+     keys.push(deprecatedJwk)
+diff --git a/server/src/pages/Main.tsx b/server/src/pages/Main.tsx
+index 37cd6e9e60457151bab879fed0244819577378c2..4977e91546fd6e7806ca53b224b25b537eb4af52 100644
+--- a/server/src/pages/Main.tsx
++++ b/server/src/pages/Main.tsx
+@@ -117,6 +117,8 @@ const Main = () => {
+       locale={locale}
+       locales={initialProps.enableLocaleSelector ? initialProps.locales : [locale]}
+       logoUrl={initialProps.logoUrl}
++      appName={initialProps.appName}
++      redirectOrigin={initialProps.redirectOrigin}
+       onSwitchLocale={handleSwitchLocale}
+     >
+       <CurrentView
+diff --git a/server/src/pages/auth-theme.css b/server/src/pages/auth-theme.css
+index bee875a70750bd03a40d1745ed809cb56d4c812f..54e11fa52daa53fd62ccac406f911e092fda66de 100644
+--- a/server/src/pages/auth-theme.css
++++ b/server/src/pages/auth-theme.css
+@@ -16,6 +16,11 @@
+   border-radius: 4px;
+   border-top: 2px solid #22c55e;
+ }
++.naccount-auth .auth-brand { display: flex; align-items: center; gap: 8px; min-height: 40px; font-weight: 700; }
++.naccount-auth .auth-app-context { width: var(--text-width); text-align: center; overflow-wrap: anywhere; }
++.naccount-auth .auth-app-context p { color: var(--auth-muted); font-size: 12px; }
++.naccount-auth .auth-app-context strong { display: block; margin: 4px 0; font-size: 16px; }
++.naccount-auth .auth-return-origin span { display: block; }
+ .naccount-auth :is(input:not([type=checkbox]), select, textarea) {
+   color: var(--label-color);
+   background: var(--auth-control);
+diff --git a/server/src/pages/blocks/Layout.test.tsx b/server/src/pages/blocks/Layout.test.tsx
+index 7a07a4671246d344792d1f5c4a2ced5ec60461c9..e55262d03438bfc659fc3cdcf90af3e86fe6a428 100644
+--- a/server/src/pages/blocks/Layout.test.tsx
++++ b/server/src/pages/blocks/Layout.test.tsx
+@@ -50,6 +50,21 @@ describe(
+       expect(container.querySelector('main > section')?.classList.contains('bg-white')).toBe(false)
+     })
+ 
++    it('shows NAccount without a broken image when no organization logo is configured', () => {
++      const container = setup({ logoUrl: '' })
++      expect(container.querySelector('img')).toBeNull()
++      expect(getByText(container, 'NAccount')).toBeDefined()
++    })
++
++    it('shows trusted application and return origin as text, not markup or a navigation link', () => {
++      const container = setup({ appName: '<img src=x onerror=alert(1)>', redirectOrigin: 'https://app.example.com', locale: 'zh' })
++      const context = container.querySelector('.auth-app-context')!
++      expect(context.textContent).toContain('继续访问应用')
++      expect(context.textContent).toContain('<img src=x onerror=alert(1)>')
++      expect(context.textContent).toContain('https://app.example.com')
++      expect(context.querySelector('img, a')).toBeNull()
++    })
++
+     it(
+       'renders children content',
+       () => {
+diff --git a/server/src/pages/blocks/Layout.tsx b/server/src/pages/blocks/Layout.tsx
+index edea53851dbff7820072ca8d79fe9303535952bd..e9736f75ad8cb06e5a206ef362a63a5f9f77bc64 100644
+--- a/server/src/pages/blocks/Layout.tsx
++++ b/server/src/pages/blocks/Layout.tsx
+@@ -7,21 +7,26 @@ export interface LayoutProps {
+   locale: typeConfig.Locale;
+   locales: typeConfig.Locale[];
+   logoUrl: string;
++  appName?: string;
++  redirectOrigin?: string;
+   onSwitchLocale: (locale: typeConfig.Locale) => void;
+ }
+ 
+ const Layout = ({
+-  children, locale, locales, logoUrl, onSwitchLocale,
++  children, locale, locales, logoUrl, appName, redirectOrigin, onSwitchLocale,
+ }: LayoutProps) => (
+   <main className='naccount-auth flex flex-col items-center justify-center w-full min-h-screen bg-layoutColor text-labelColor'>
+     <section className='auth-card flex flex-col justify-center items-center'>
+       <section className='flex flex-col items-center gap-4 max-h-[80vh] p-8 overflow-y-auto overflow-x-hidden'>
+         <header className='relative flex w-full justify-center items-center'>
+-          <img
++          <div className='auth-brand'>
++          {logoUrl && <img
+             className='w-10'
+             src={logoUrl}
+             alt='Logo'
+-          />
++          />}
++          <span>NAccount</span>
++          </div>
+           {locales.length > 1 && (
+             <div className='absolute right-0'>
+               <LocaleSelector
+@@ -32,6 +37,11 @@ const Layout = ({
+             </div>
+           )}
+         </header>
++        {appName && <div className='auth-app-context'>
++          <p>{layout.continueTo[locale]}</p>
++          <strong>{appName}</strong>
++          {redirectOrigin && <p className='auth-return-origin'>{layout.returnTo[locale]} <span>{redirectOrigin}</span></p>}
++        </div>}
+         <section className='flex flex-col justify-center items-center gap-4'>
+           {children}
+         </section>
+diff --git a/server/src/pages/hooks/useCurrentView.test.tsx b/server/src/pages/hooks/useCurrentView.test.tsx
+index a55d741d9a040def9114c89484c910dcf9aac775..ef52e2c12d394fcfd40d25525fa738f6b2fd26c1 100644
+--- a/server/src/pages/hooks/useCurrentView.test.tsx
++++ b/server/src/pages/hooks/useCurrentView.test.tsx
+@@ -40,6 +40,7 @@ describe(
+   // Reset mocks and window location between tests.
+     afterEach(() => {
+       vi.resetAllMocks()
++      Reflect.deleteProperty(window, '__initialProps')
+       window.history.pushState(
+         {},
+         '',
+@@ -47,6 +48,19 @@ describe(
+       )
+     })
+ 
++    test.each([
++      ['signup', true, View.SignUp],
++      ['reset', true, View.ResetPassword],
++      ['signup', false, View.SignIn],
++      ['reset', false, View.SignIn],
++      ['unknown', true, View.SignIn],
++    ])('honors hosted screen=%s only when enabled=%s', (screen, enabled, expected) => {
++      Object.defineProperty(window, '__initialProps', { configurable: true, value: { enableSignUp: enabled, enablePasswordReset: enabled } })
++      window.history.pushState({}, '', `/login?screen=${screen}`)
++      const { result } = renderHook(() => useCurrentView())
++      expect(result.current.view).toBe(expected)
++    })
++
+     test(
+       'returns view from getStepFromParams if available',
+       () => {
+diff --git a/server/src/pages/hooks/useCurrentView.ts b/server/src/pages/hooks/useCurrentView.ts
+index 39aca5dd5c95c98f2793973bfc84f361be5315b7..e08383ac848499c0b90e9daf905a0beb1ed4be51 100644
+--- a/server/src/pages/hooks/useCurrentView.ts
++++ b/server/src/pages/hooks/useCurrentView.ts
+@@ -35,8 +35,11 @@ const useCurrentView = () => {
+         return View.SignIn
+       }
+       default:
+-        if (location.pathname === routeConfig.IdentityRoute.AuthorizeView &&
+-          new URLSearchParams(location.search).get('screen') === 'signup' && initialProps.enableSignUp) return View.SignUp
++        if (location.pathname === routeConfig.IdentityRoute.AuthorizeView || location.pathname === routeConfig.OauthRoute.Login) {
++          const screen = new URLSearchParams(location.search).get('screen')
++          if (screen === 'signup' && initialProps.enableSignUp) return View.SignUp
++          if (screen === 'reset' && initialProps.enablePasswordReset) return View.ResetPassword
++        }
+         return View.SignIn
+       }
+     },
+diff --git a/server/src/pages/hooks/useInitialProps.test.ts b/server/src/pages/hooks/useInitialProps.test.ts
+index e4627b6969c58e781c5253d70b82c22b299e7333..66e3b5d006ca80899489394e30985e3ade0e315f 100644
+--- a/server/src/pages/hooks/useInitialProps.test.ts
++++ b/server/src/pages/hooks/useInitialProps.test.ts
+@@ -39,6 +39,7 @@ describe(
+           termsLink: '',
+           privacyPolicyLink: '',
+           appName: '',
++          redirectOrigin: '',
+           allowPasskey: false,
+           allowRecoveryCode: false,
+           oidcProviders: [],
+@@ -72,6 +73,7 @@ describe(
+           termsLink: 'http://example.com/terms',
+           privacyPolicyLink: 'http://example.com/privacy',
+           appName: 'TestApp',
++          redirectOrigin: 'https://app.example.com',
+           allowPasskey: true,
+           allowRecoveryCode: true,
+         }
+@@ -100,6 +102,7 @@ describe(
+           termsLink: 'http://example.com/terms',
+           privacyPolicyLink: 'http://example.com/privacy',
+           appName: 'TestApp',
++          redirectOrigin: 'https://app.example.com',
+           allowPasskey: true,
+           allowRecoveryCode: true,
+           oidcProviders: [],
+diff --git a/server/src/pages/hooks/useInitialProps.ts b/server/src/pages/hooks/useInitialProps.ts
+index 05f467cf2cba59d9e511b207df81973c3e066c56..370311ff92e65512a642a69668d5c75c211299d3 100644
+--- a/server/src/pages/hooks/useInitialProps.ts
++++ b/server/src/pages/hooks/useInitialProps.ts
+@@ -17,6 +17,7 @@ export interface InitialProps {
+   allowRecoveryCode: boolean;
+   namesIsRequired: boolean;
+   appName: string;
++  redirectOrigin?: string;
+   termsLink: string;
+   privacyPolicyLink: string;
+   googleClientId: string;
+@@ -69,6 +70,7 @@ const useInitialProps = () => {
+         termsLink: 'termsLink' in intialProps ? String(intialProps.termsLink) : '',
+         privacyPolicyLink: 'privacyPolicyLink' in intialProps ? String(intialProps.privacyPolicyLink) : '',
+         appName: 'appName' in intialProps ? String(intialProps.appName) : '',
++        redirectOrigin: 'redirectOrigin' in intialProps ? String(intialProps.redirectOrigin) : '',
+         allowPasskey: 'allowPasskey' in intialProps ? Boolean(intialProps.allowPasskey) : false,
+         allowRecoveryCode: 'allowRecoveryCode' in intialProps ? Boolean(intialProps.allowRecoveryCode) : false,
+       }
+diff --git a/server/src/pages/tools/hostedLocale.test.ts b/server/src/pages/tools/hostedLocale.test.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..d9c6c53c00a261863ef6db1d74d17cd0fc664f89
+--- /dev/null
++++ b/server/src/pages/tools/hostedLocale.test.ts
+@@ -0,0 +1,25 @@
++import { afterEach, expect, test } from 'vitest'
++import { getLocaleFromParams } from './param'
++import { AuthRuntime } from './authRuntime'
++
++afterEach(() => {
++  document.documentElement.lang = ''
++  window.history.replaceState({}, '', '/')
++})
++
++test.each(['', '?locale=invalid', '?locale=zh-CN'])('uses the server-negotiated document locale for %s', (query) => {
++  document.documentElement.lang = 'zh'
++  window.history.replaceState({}, '', `/login${query}`)
++  expect(getLocaleFromParams()).toBe('zh')
++})
++
++test('a dialog uses its runtime locale instead of the host document', () => {
++  document.documentElement.lang = 'zh'
++  const runtime = { url: new URL('https://example.com/login?locale=fr') } as AuthRuntime
++  expect(getLocaleFromParams(runtime)).toBe('fr')
++})
++
++test('unknown query locale fails back to a supported language, not undefined strings', () => {
++  window.history.replaceState({}, '', '/login?locale=invalid')
++  expect(getLocaleFromParams()).toBe('en')
++})
+diff --git a/server/src/pages/tools/locale.ts b/server/src/pages/tools/locale.ts
+index a76bcdd13a04889f04473c8917139c9711755029..4b0eadb44bae666ec5564da61ae5885b1147e2aa 100644
+--- a/server/src/pages/tools/locale.ts
++++ b/server/src/pages/tools/locale.ts
+@@ -151,6 +151,16 @@ export const emailMfa = Object.freeze({
+ })
+ 
+ export const layout = Object.freeze({
++  continueTo: {
++    en: 'Continue to application',
++    fr: 'Continuer vers l’application',
++    zh: '继续访问应用',
++  },
++  returnTo: {
++    en: 'After authentication, return to',
++    fr: 'Après authentification, retour vers',
++    zh: '完成验证后返回',
++  },
+   poweredByAuth: {
+     en: `Powered by ${variableConfig.systemConfig.name}`,
+     fr: `Propulsé par ${variableConfig.systemConfig.name}`,
+diff --git a/server/src/pages/tools/param.test.ts b/server/src/pages/tools/param.test.ts
+index 5d1a061ada402035aad6678ce7134135c6e0173a..66933171c0cbe8d87161690dfb1826a5f3a859e8 100644
+--- a/server/src/pages/tools/param.test.ts
++++ b/server/src/pages/tools/param.test.ts
+@@ -35,10 +35,10 @@ describe(
+       'getLocaleFromParams',
+       () => {
+         test(
+-          'returns locale from URL params when present',
++          'returns a supported locale from URL params when present',
+           () => {
+-            window.location.search = '?locale=ja'
+-            expect(getLocaleFromParams()).toBe('ja')
++            window.location.search = '?locale=fr'
++            expect(getLocaleFromParams()).toBe('fr')
+           },
+         )
+ 
+diff --git a/server/src/pages/tools/param.ts b/server/src/pages/tools/param.ts
+index 7f2ee5e6a6eb37164226a5cbac029bb1adb263be..d942d12b13446ba147e90b180676e12c7c3b7ad4 100644
+--- a/server/src/pages/tools/param.ts
++++ b/server/src/pages/tools/param.ts
+@@ -1,15 +1,22 @@
+ import { parse } from 'qs'
+-import { typeConfig } from 'configs'
++import { localeConfig, typeConfig } from 'configs'
+ import { Policy } from 'dtos/oauth'
+ import { AuthRuntime } from './authRuntime'
+ 
+ export const getLocaleFromParams = (runtime: AuthRuntime | null = null) => {
++  // Standalone HTML carries the locale negotiated by the server (including Accept-Language).
++  // Dialogs instead own a validated runtime URL and must not inherit the host page locale.
++  const supported = Object.keys(localeConfig.common.documentTitle)
++  if (!runtime && supported.includes(document.documentElement.lang)) {
++    return document.documentElement.lang as typeConfig.Locale
++  }
+   const params = parse(
+     runtime?.url.search ?? window.location.search,
+     { ignoreQueryPrefix: true },
+   )
+ 
+-  return ('locale' in params ? String(params.locale) : 'en') as typeConfig.Locale
++  const requested = String(params.locale ?? '').toLowerCase().split('-')[0]
++  return (supported.includes(requested) ? requested : 'en') as typeConfig.Locale
+ }
+ 
+ export const parseRedirectUri = (redirectUri: unknown): string => {
+diff --git a/server/src/pages/tools/request.test.ts b/server/src/pages/tools/request.test.ts
+index d6d492273fdf6497ba7da8f44adec7adfe501620..3dcbe9afdaabe70f1dc29e5019c3ba6999dcd902 100644
+--- a/server/src/pages/tools/request.test.ts
++++ b/server/src/pages/tools/request.test.ts
+@@ -307,10 +307,21 @@ describe(
+               onSwitchView,
+             )
+ 
+-            expect(window.location.href).toBe('http://example.com?state=state123&code=code123&locale=en&org=org123')
++            expect(window.location.href).toBe('http://example.com/?state=state123&code=code123&locale=en&org=org123')
+           },
+         )
+ 
++        test('preserves existing callback query and encodes opaque state without extra parameters', () => {
++          Object.defineProperty(window, 'opener', { value: null, writable: true })
++          const state = 'nonce+with&reserved=#and?marks'
++          handleAuthorizeStep({ state, code: 'code123', redirectUri: 'https://example.com/callback?source=desktop' }, locale, onSwitchView)
++          const target = new URL(window.location.href)
++          expect(target.searchParams.get('source')).toBe('desktop')
++          expect(target.searchParams.getAll('state')).toEqual([state])
++          expect(target.searchParams.get('code')).toBe('code123')
++          expect(target.hash).toBe('')
++        })
++
+         test(
+           'handles missing org in redirect',
+           () => {
+@@ -326,7 +337,7 @@ describe(
+               onSwitchView,
+             )
+ 
+-            expect(window.location.href).toBe('http://example.com?state=state123&code=code123&locale=en&org=')
++            expect(window.location.href).toBe('http://example.com/?state=state123&code=code123&locale=en&org=')
+           },
+         )
+ 
+diff --git a/server/src/pages/tools/request.ts b/server/src/pages/tools/request.ts
+index f2917d390f3fe9c8a39a09162a05b22daa1aaf06..3d7a863ba578383e61389b265b53f73c0533e7fd 100644
+--- a/server/src/pages/tools/request.ts
++++ b/server/src/pages/tools/request.ts
+@@ -103,9 +103,12 @@ export const handleAuthorizeStep = (
+         redirectUri,
+       )
+     } else {
+-      const queryString = `?state=${data.state}&code=${data.code}&locale=${locale}&org=${data.org ?? ''}`
+-      const url = `${redirectUri}${queryString}`
+-      window.location.href = url
++      const url = new URL(redirectUri)
++      url.searchParams.set('state', data.state)
++      url.searchParams.set('code', data.code)
++      url.searchParams.set('locale', locale)
++      url.searchParams.set('org', data.org ?? '')
++      window.location.href = url.href
+     }
+   }
+ }
+diff --git a/server/src/routes/oauth.tsx b/server/src/routes/oauth.tsx
+index 67568a0f18648b5ac4aef6887fdbc11b409b7d48..bbb239edbfd7ec6eb255119d9c7caf34313399a5 100644
+--- a/server/src/routes/oauth.tsx
++++ b/server/src/routes/oauth.tsx
+@@ -15,6 +15,9 @@ oauthRoutes.get(
+   oauthHandler.getAuthorize,
+ )
+ 
++// Shared hosted panel; uses the same client, redirect, PKCE, policy and SSO guards.
++oauthRoutes.get(routeConfig.OauthRoute.Login, oauthHandler.getAuthorize)
++
+ oauthRoutes.post(
+   routeConfig.OauthRoute.Token,
+   authMiddleware.s2sBasicAuth,
+diff --git a/server/src/services/jwt.ts b/server/src/services/jwt.ts
+index b502615878c986b4b3c9c57fe6017f17da0ed879..dec35006397ad49df5f950ad918fb103ee2fe38c 100644
+--- a/server/src/services/jwt.ts
++++ b/server/src/services/jwt.ts
+@@ -63,14 +63,12 @@ export const pemToBinary = (pem: string): Uint8Array => {
+   ))
+ }
+ 
+-export const signWithKid = async (
+-  c: Context<typeConfig.Context>, payload: object,
+-) => {
+-  const privateKey = await kvService.getJwtPrivateSecret(c)
+-  const publicKey = await kvService.getJwtPublicSecret(c)
+-  const jwk = await cryptoUtil.secretToJwk(publicKey)
+-
+-  const key = await crypto.subtle.importKey(
++const loadSigningMaterial = async (c: Context<typeConfig.Context>) => {
++  const [privateKey, publicKey] = await Promise.all([
++    kvService.getJwtPrivateSecret(c),
++    kvService.getJwtPublicSecret(c),
++  ])
++  const [key, jwk] = await Promise.all([crypto.subtle.importKey(
+     'pkcs8',
+     pemToBinary(privateKey),
+     {
+@@ -79,12 +77,26 @@ export const signWithKid = async (
+     },
+     false,
+     ['sign'],
+-  )
++  ), cryptoUtil.secretToJwk(publicKey)])
++  return { key, kid: jwk.kid }
++}
++
++export const signWithKid = async (
++  c: Context<typeConfig.Context>, payload: object,
++) => {
++  // Only this request shares signing material, including an in-flight or rejected load.
++  // The next request reads KV again so key rotation does not acquire a cache window.
++  let material = c.get('jwt_signing_material')
++  if (!material) {
++    material = loadSigningMaterial(c)
++    c.set('jwt_signing_material', material)
++  }
++  const { key, kid } = await material
+ 
+   const header = {
+     alg: 'RS256',
+     typ: 'JWT',
+-    kid: jwk.kid,
++    kid,
+   }
+ 
+   const encodedHeader = base64UrlEncode(JSON.stringify(header))
+diff --git a/server/src/services/jwtSigning.test.ts b/server/src/services/jwtSigning.test.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..04f868e36c944853eeccb3ecbe5b20ec96f04a6d
+--- /dev/null
++++ b/server/src/services/jwtSigning.test.ts
+@@ -0,0 +1,100 @@
++import { generateKeyPairSync } from 'node:crypto'
++import { Hono } from 'hono'
++import { decode, verify } from 'hono/jwt'
++import { afterEach, beforeAll, describe, expect, test, vi } from 'vitest'
++import { typeConfig } from 'configs'
++import { kvService } from 'services'
++import { cryptoUtil } from 'utils'
++import { signWithKid } from './jwt'
++import { getJwks } from 'handlers/other'
++
++const pair = () => generateKeyPairSync('rsa', {
++  modulusLength: 2048,
++  privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
++  publicKeyEncoding: { type: 'spki', format: 'pem' },
++})
++let first: ReturnType<typeof pair>
++let second: ReturnType<typeof pair>
++beforeAll(() => { first = pair(); second = pair() })
++afterEach(() => vi.restoreAllMocks())
++
++describe('request-local signing material', () => {
++  test('shares one load/import for concurrent and sequential token signatures', async () => {
++    const privateRead = vi.spyOn(kvService, 'getJwtPrivateSecret').mockResolvedValue(first.privateKey)
++    const publicRead = vi.spyOn(kvService, 'getJwtPublicSecret').mockResolvedValue(first.publicKey)
++    const importKey = vi.spyOn(crypto.subtle, 'importKey')
++    const router = new Hono<typeConfig.Context>().get('/', async (c) => {
++      const tokens = await Promise.all([signWithKid(c, { sub: 'access' }), signWithKid(c, { sub: 'id' })])
++      tokens.push(await signWithKid(c, { sub: 'third' }))
++      return c.json(tokens)
++    })
++    const tokens = await (await router.request('/')).json() as string[]
++    expect(privateRead).toHaveBeenCalledTimes(1)
++    expect(publicRead).toHaveBeenCalledTimes(1)
++    expect(importKey.mock.calls.filter(([format]) => format === 'pkcs8')).toHaveLength(1)
++    expect(importKey.mock.calls.filter(([format]) => format === 'spki')).toHaveLength(1)
++    expect(new Set(tokens.map((token) => (decode(token).header as { kid?: string }).kid)).size).toBe(1)
++    for (const [index, token] of tokens.entries()) {
++      expect((await verify(token, first.publicKey, 'RS256')).sub).toBe(['access', 'id', 'third'][index])
++    }
++  })
++
++  test('a subsequent request reads rotated material, not a module-level cache', async () => {
++    const privateRead = vi.spyOn(kvService, 'getJwtPrivateSecret').mockResolvedValueOnce(first.privateKey).mockResolvedValueOnce(second.privateKey)
++    vi.spyOn(kvService, 'getJwtPublicSecret').mockResolvedValueOnce(first.publicKey).mockResolvedValueOnce(second.publicKey)
++    const router = new Hono<typeConfig.Context>().get('/', async (c) => c.text(await signWithKid(c, { sub: 'user' })))
++    const before = await (await router.request('/')).text()
++    const after = await (await router.request('/')).text()
++    expect(privateRead).toHaveBeenCalledTimes(2)
++    expect(decode(before).header).not.toEqual(decode(after).header)
++    expect((await verify(after, second.publicKey, 'RS256')).sub).toBe('user')
++    await expect(verify(after, first.publicKey, 'RS256')).rejects.toThrow()
++  })
++
++  test('does not retry a failed load within a request; the next request can recover', async () => {
++    const read = vi.spyOn(kvService, 'getJwtPrivateSecret').mockRejectedValueOnce(new Error('unavailable')).mockResolvedValueOnce(first.privateKey)
++    vi.spyOn(kvService, 'getJwtPublicSecret').mockResolvedValue(first.publicKey)
++    const router = new Hono<typeConfig.Context>().get('/', async (c) => {
++      const results = await Promise.allSettled([signWithKid(c, {}), signWithKid(c, {})])
++      return c.json(results.map((r) => r.status))
++    })
++    expect(await (await router.request('/')).json()).toEqual(['rejected', 'rejected'])
++    expect(read).toHaveBeenCalledTimes(1)
++    expect(await (await router.request('/')).json()).toEqual(['fulfilled', 'fulfilled'])
++    expect(read).toHaveBeenCalledTimes(2)
++  })
++
++  test('starts both signing key reads before either completes', async () => {
++    let release!: (value: string) => void
++    const pending = new Promise<string>((resolve) => { release = resolve })
++    vi.spyOn(kvService, 'getJwtPrivateSecret').mockReturnValue(pending)
++    const publicRead = vi.spyOn(kvService, 'getJwtPublicSecret').mockResolvedValue(first.publicKey)
++    const router = new Hono<typeConfig.Context>().get('/', async (c) => c.text(await signWithKid(c, {})))
++    const response = router.request('/')
++    try { await vi.waitFor(() => expect(publicRead).toHaveBeenCalledTimes(1)) }
++    finally { release(first.privateKey) }
++    expect((await response).status).toBe(200)
++  })
++})
++
++describe('JWKS parallel reads without caching', () => {
++  test('starts deprecated lookup before current resolves and preserves current-first ordering', async () => {
++    let release!: (value: string) => void
++    const pending = new Promise<string>((resolve) => { release = resolve })
++    vi.spyOn(kvService, 'getJwtPublicSecret').mockReturnValue(pending)
++    const deprecated = vi.spyOn(kvService, 'getDeprecatedPublicSecret').mockResolvedValue(second.publicKey)
++    const router = new Hono<typeConfig.Context>().get('/', getJwks)
++    const response = router.request('/', {}, {} as typeConfig.Bindings)
++    try { await vi.waitFor(() => expect(deprecated).toHaveBeenCalledTimes(1)) }
++    finally { release(first.publicKey) }
++    expect(await (await response).json()).toEqual({ keys: [await cryptoUtil.secretToJwk(first.publicKey), await cryptoUtil.secretToJwk(second.publicKey)] })
++  })
++
++  test('works without a deprecated key and does not accept a missing current key', async () => {
++    vi.spyOn(kvService, 'getJwtPublicSecret').mockResolvedValueOnce(first.publicKey).mockRejectedValueOnce(new Error('missing key'))
++    vi.spyOn(kvService, 'getDeprecatedPublicSecret').mockResolvedValue(null)
++    const router = new Hono<typeConfig.Context>().get('/', getJwks)
++    expect(await (await router.request('/', {}, {} as typeConfig.Bindings)).json()).toEqual({ keys: [await cryptoUtil.secretToJwk(first.publicKey)] })
++    expect((await router.request('/', {}, {} as typeConfig.Bindings)).status).toBe(500)
++  })
++})
