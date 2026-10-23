@@ -1,0 +1,85 @@
+{
+  "schemaVersion": 1,
+  "configSha256": "be91c65e3ce84e0b08e19a266c88187a892fe8c51a20eb89b56415826c11ce11",
+  "base": "290efee29e4ff7329804530c61880c9c5d36e7fb",
+  "head": "471ca79067c378bcab0b449fbde8f4f357f0e30f",
+  "tree": "3e44ff645fc26f30e68c96c32ada0e80e077eeae",
+  "patches": [
+    {
+      "commit": "67c0882f81bb25cd2cfb8ff18dca25a83506b36f",
+      "topic": "cloudflare-email",
+      "file": "patches/0001-cloudflare-email.patch"
+    },
+    {
+      "commit": "7abb0ca388449b3990c39872ae655f0197280b23",
+      "topic": "admin-loading",
+      "file": "patches/0002-admin-loading.patch"
+    },
+    {
+      "commit": "2774512cf4eb50bd0a51120e5d896dab425cd2ee",
+      "topic": "user-portal",
+      "file": "patches/0003-user-portal.patch"
+    },
+    {
+      "commit": "eaa8557390f6ba6d54e5a7cda27b27c1593e17a7",
+      "topic": "user-portal",
+      "file": "patches/0004-user-portal.patch"
+    },
+    {
+      "commit": "858eccd4add4bc3873f4835cf9d21d54b543094c",
+      "topic": "user-portal",
+      "file": "patches/0005-user-portal.patch"
+    },
+    {
+      "commit": "e070108ab9ab93e6bd45dca4059c47a2f192fb7b",
+      "topic": "user-portal",
+      "file": "patches/0006-user-portal.patch"
+    },
+    {
+      "commit": "3785a7ba18cb7fbb3ac12d33abac20dc94c04cbe",
+      "topic": "user-portal",
+      "file": "patches/0007-user-portal.patch"
+    },
+    {
+      "commit": "4639ae1bb9b2b91cdd0b1319c44aa19bf79a22c4",
+      "topic": "user-portal",
+      "file": "patches/0008-user-portal.patch"
+    },
+    {
+      "commit": "0ea7490805cb7916dfe20dcc1e0dbd97dc74e410",
+      "topic": "user-portal",
+      "file": "patches/0009-user-portal.patch"
+    },
+    {
+      "commit": "ce98fe8ce513f9c65f19330567251cc8fc19504a",
+      "topic": "admin-loading",
+      "file": "patches/0010-admin-loading.patch"
+    },
+    {
+      "commit": "10bccd55191f8c647a0a8a29412e55582ab990b0",
+      "topic": "user-portal",
+      "file": "patches/0011-user-portal.patch"
+    },
+    {
+      "commit": "471ca79067c378bcab0b449fbde8f4f357f0e30f",
+      "topic": "admin-loading",
+      "file": "patches/0012-admin-loading.patch"
+    }
+  ],
+  "files": {
+    "patches/0001-cloudflare-email.patch": "2716772c98f5a679bcd49045574d4993de9c6c5e5e2cbcad2ed52d3426358f70",
+    "patches/0002-admin-loading.patch": "caa310dc41c6654cfe72c46aa7083ff525bcb4cb520e20204f27a67dd95eb402",
+    "patches/0003-user-portal.patch": "9ae30f13f45f23fb5894f4837af5bacbb86aff39fe1a38765a22a9cda1c37cb3",
+    "patches/0004-user-portal.patch": "b26ee0626e7913529023f0ce30e46b37d5a862214a34b53ad54a1d07b5189054",
+    "patches/0005-user-portal.patch": "5ea06cd340e1c8ada151678ec53d68648189b5dbf12e9c4bdeb43e0cf24a588e",
+    "patches/0006-user-portal.patch": "44b0a5bb9c4aaf4a5bd062560033bd8ddc9d53447edf0f3b7438c934be2a9281",
+    "patches/0007-user-portal.patch": "5776d46a79173d94577b2133ac8c351bcaa4195ab3a8acb77feb2a9aa4761e00",
+    "patches/0008-user-portal.patch": "93f8fdd85af232d9b60e902450b7b4f54bb29e64a5bd2c7448d3d80eef30e895",
+    "patches/0009-user-portal.patch": "09a630e47e8e38f87227f2a0ee601b1873c841f173ac94b5b5d34aaf9f6200cf",
+    "patches/0010-admin-loading.patch": "86161ea69acf88b3fd355478d7253e9752d1a57e2ac481cd5692cb9070fa6305",
+    "patches/0011-user-portal.patch": "817d184b890ed58b3f36a44444713c3c3b2e8689c5560960f447474874862f9e",
+    "patches/0012-admin-loading.patch": "b82ac8adb54a4a3a7c40bffe8f5fdfead7b0c6296fb6322cd4c63b178f6676c5",
+    "series.txt": "adc190816f40f37857bd33873c916a2cdd28e8f4ba0270479e641322eae0c7d7",
+    "personal-history.bundle": "34a0fce32c98ea95385afe2e02ffb6dc715ea8c28524aab9905f202b24741bda"
+  }
+}
