@@ -1,0 +1,403 @@
+From 7abb0ca388449b3990c39872ae655f0197280b23 Mon Sep 17 00:00:00 2001
+From: aiaimimi0920 <153103332+aiaimimi0920@users.noreply.github.com>
+Date: Thu, 8 Oct 2026 20:11:18 -0700
+Subject: [PATCH] fix(NA-07-S01): refresh current roles and bound admin
+ configuration loading
+
+NAccount-Patch-Topic: admin-loading
+---
+ admin-panel/app/Setup.test.tsx            | 21 ++++--
+ admin-panel/app/Setup.tsx                 | 27 ++++----
+ admin-panel/app/useAdminConfig.test.tsx   | 78 +++++++++++++++++++++++
+ admin-panel/app/useAdminConfig.ts         | 54 ++++++++++++++++
+ admin-panel/tools/proxy.ts                |  3 +
+ admin-panel/translations/en.json          |  2 +
+ admin-panel/translations/fr.json          |  2 +
+ server/src/__tests__/normal/oauth.test.ts | 32 ++++++++++
+ server/src/services/oauth.ts              |  5 +-
+ 9 files changed, 206 insertions(+), 18 deletions(-)
+ create mode 100644 admin-panel/app/useAdminConfig.test.tsx
+ create mode 100644 admin-panel/app/useAdminConfig.ts
+
+diff --git a/admin-panel/app/Setup.test.tsx b/admin-panel/app/Setup.test.tsx
+index 88eac15aef363c549fbebab7491ca5e7fd8083ba..7739e9bf6617c3e8a8ef270d4b75b64692f12fdc 100644
+--- a/admin-panel/app/Setup.test.tsx
++++ b/admin-panel/app/Setup.test.tsx
+@@ -91,6 +91,7 @@ describe(
+ 
+     beforeEach(() => {
+       vi.clearAllMocks()
++      mockAcquireToken.mockResolvedValue('test-token')
+       mockSendNextRequest.mockResolvedValue({ configs: {} })
+       errorSignal.value = ''
+       configSignal.value = null
+@@ -228,11 +229,11 @@ describe(
+ 
+     it(
+       'shows optional nav items based on config',
+-      () => {
+-        configSignal.value = {
++      async () => {
++        mockSendNextRequest.mockResolvedValue({ configs: {
+           ENABLE_ORG: true,
+           ENABLE_SIGN_IN_LOG: true,
+-        } as any
++        } })
+         vi.mocked(useAuth).mockReturnValue({
+           isAuthenticating: false,
+           isAuthenticated: true,
+@@ -253,11 +254,23 @@ describe(
+           locale='en'
+           messages={{}}><Setup>Test</Setup></NextIntlClientProvider>)
+ 
+-        expect(screen.getByText('layout.orgs')).toBeInTheDocument()
++        expect(await screen.findByText('layout.orgs')).toBeInTheDocument()
+         expect(screen.getByText('layout.logs')).toBeInTheDocument()
+       },
+     )
+ 
++    it(
++      'shows a retry instead of an endless spinner when configuration fails',
++      async () => {
++        mockSendNextRequest.mockResolvedValueOnce(undefined).mockResolvedValueOnce({ configs: {} })
++        render(<NextIntlClientProvider locale='en' messages={{}}><Setup>Loaded content</Setup></NextIntlClientProvider>)
++        expect(await screen.findByText('layout.configLoadFailed')).toBeInTheDocument()
++        expect(screen.queryByTestId('spinner')).not.toBeInTheDocument()
++        fireEvent.click(screen.getByText('layout.retry'))
++        expect(await screen.findByText('Loaded content')).toBeInTheDocument()
++      },
++    )
++
+     it(
+       'clears error signal on pathname change',
+       () => {
+diff --git a/admin-panel/app/Setup.tsx b/admin-panel/app/Setup.tsx
+index 9827e5e0bb298ae8bedfd2c7cde7ef029a99460e..6ea1583855be5924e710ba22dd77fcd14a7ef066 100644
+--- a/admin-panel/app/Setup.tsx
++++ b/admin-panel/app/Setup.tsx
+@@ -23,6 +23,7 @@ import {
+   ScrollText, Shapes, Tags, UsersRound, Workflow,
+ } from 'lucide-react'
+ import useSignalValue from './useSignalValue'
++import useAdminConfig from './useAdminConfig'
+ import { useIsMobile } from '@/hooks/useIsMobile'
+ import {
+   Link, usePathname as useI18nPathname,
+@@ -35,7 +36,6 @@ import {
+   errorSignal,
+ } from 'signals'
+ import {
+-  proxyTool,
+   routeTool,
+   accessTool,
+ } from 'tools'
+@@ -65,6 +65,8 @@ const AuthSetup = ({ children }: PropsWithChildren) => {
+     loginRedirect, logoutRedirect, isLoadingUserInfo, acquireUserInfoError,
+   } = useAuth()
+ 
++  const configLoad = useAdminConfig(isAuthenticated, acquireToken)
++
+   const handleLogout = () => {
+     logoutRedirect({ postLogoutRedirectUri: `${process.env.NEXT_PUBLIC_CLIENT_URI}/${locale || 'en'}/dashboard` })
+   }
+@@ -78,22 +80,11 @@ const AuthSetup = ({ children }: PropsWithChildren) => {
+ 
+   useEffect(
+     () => {
+-      const getInfo = async () => {
+-        const token = await acquireToken()
+-        const data = await proxyTool.sendNextRequest({
+-          endpoint: '/api/info',
+-          method: 'GET',
+-          token,
+-        })
+-        configSignal.value = data.configs
+-      }
+-
+       if (isAuthenticated) {
+-        getInfo()
+         acquireUserInfo()
+       }
+     },
+-    [acquireUserInfo, isAuthenticated, acquireToken],
++    [acquireUserInfo, isAuthenticated],
+   )
+ 
+   useEffect(
+@@ -137,6 +128,16 @@ const AuthSetup = ({ children }: PropsWithChildren) => {
+     )
+   }
+ 
++  if (configLoad.failed) {
++    return (
++      <section className='w-full h-screen flex flex-col gap-4 items-center justify-center'>
++        <Alert variant='destructive'>{t('layout.configLoadFailed')}</Alert>
++        <Button onClick={configLoad.retry}>{t('layout.retry')}</Button>
++        <Button variant='ghost' onClick={handleLogout}>{t('layout.logout')}</Button>
++      </section>
++    )
++  }
++
+   return children
+ }
+ 
+diff --git a/admin-panel/app/useAdminConfig.test.tsx b/admin-panel/app/useAdminConfig.test.tsx
+new file mode 100644
+index 0000000000000000000000000000000000000000..8e28dc9801600e2067b65a9743630d9ac23cd870
+--- /dev/null
++++ b/admin-panel/app/useAdminConfig.test.tsx
+@@ -0,0 +1,78 @@
++import { act, renderHook, waitFor } from '@testing-library/react'
++import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
++import { configSignal } from 'signals'
++import { proxyTool } from 'tools'
++import useAdminConfig, { CONFIG_TIMEOUT_MS } from './useAdminConfig'
++
++describe('admin configuration lifecycle', () => {
++  const send = vi.spyOn(proxyTool, 'sendNextRequest')
++  const acquire = vi.fn(async () => 'test-token')
++  beforeEach(() => {
++    configSignal.value = null
++    send.mockReset()
++    acquire.mockClear()
++  })
++  afterEach(() => vi.useRealTimers())
++
++  it('loads configuration and forwards cancellation', async () => {
++    send.mockResolvedValue({ configs: { ENABLE_ORG: true } })
++    const { result } = renderHook(() => useAdminConfig(true, acquire))
++    await waitFor(() => expect(configSignal.value).toEqual({ ENABLE_ORG: true }))
++    expect(result.current.failed).toBe(false)
++    expect(send.mock.calls[0][0].signal).toBeInstanceOf(AbortSignal)
++  })
++
++  it.each([undefined, {}, { configs: null }, { configs: [] }])('ends loading for invalid responses %j', async (response) => {
++    send.mockResolvedValue(response)
++    const { result } = renderHook(() => useAdminConfig(true, acquire))
++    await waitFor(() => expect(result.current.failed).toBe(true))
++    expect(configSignal.value).toBeNull()
++  })
++
++  it('recovers after an explicit retry, without automatic retry loops', async () => {
++    send.mockRejectedValueOnce(new Error('network failure')).mockResolvedValueOnce({ configs: {} })
++    const { result } = renderHook(() => useAdminConfig(true, acquire))
++    await waitFor(() => expect(result.current.failed).toBe(true))
++    expect(send).toHaveBeenCalledTimes(1)
++    act(() => result.current.retry())
++    await waitFor(() => expect(configSignal.value).toEqual({}))
++    expect(result.current.failed).toBe(false)
++    expect(send).toHaveBeenCalledTimes(2)
++  })
++
++  it('times out a hung token request and ignores its late completion', async () => {
++    vi.useFakeTimers()
++    let resolve!: (value: string) => void
++    const token = vi.fn(() => new Promise<string>((done) => { resolve = done }))
++    const { result } = renderHook(() => useAdminConfig(true, token))
++    await act(async () => { vi.advanceTimersByTime(CONFIG_TIMEOUT_MS) })
++    expect(result.current.failed).toBe(true)
++    await act(async () => resolve('late-token'))
++    expect(send).not.toHaveBeenCalled()
++  })
++
++  it('aborts a hung fetch and ignores a stale response after retry', async () => {
++    vi.useFakeTimers()
++    let resolve!: (value: unknown) => void
++    send.mockImplementationOnce(() => new Promise((done) => { resolve = done }))
++      .mockResolvedValueOnce({ configs: { ENABLE_ORG: false } })
++    const { result } = renderHook(() => useAdminConfig(true, acquire))
++    await act(async () => {})
++    await act(async () => { vi.advanceTimersByTime(CONFIG_TIMEOUT_MS) })
++    expect(result.current.failed).toBe(true)
++    expect(send.mock.calls[0][0].signal?.aborted).toBe(true)
++    await act(async () => result.current.retry())
++    await act(async () => resolve({ configs: { ENABLE_ORG: true } }))
++    expect(configSignal.value).toEqual({ ENABLE_ORG: false })
++    expect(result.current.failed).toBe(false)
++  })
++
++  it('clears old configuration and cancels when signed out', async () => {
++    send.mockResolvedValue({ configs: {} })
++    const { rerender } = renderHook(({ signedIn }) => useAdminConfig(signedIn, acquire), { initialProps: { signedIn: true } })
++    await waitFor(() => expect(configSignal.value).toEqual({}))
++    rerender({ signedIn: false })
++    expect(configSignal.value).toBeNull()
++    expect(send.mock.calls[0][0].signal?.aborted).toBe(true)
++  })
++})
+diff --git a/admin-panel/app/useAdminConfig.ts b/admin-panel/app/useAdminConfig.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..f5030742a19b48146b33245b6bddef2cbcf15de0
+--- /dev/null
++++ b/admin-panel/app/useAdminConfig.ts
+@@ -0,0 +1,54 @@
++'use client'
++
++import { useEffect, useState } from 'react'
++import { configSignal } from 'signals'
++import { proxyTool } from 'tools'
++
++export const CONFIG_TIMEOUT_MS = 15000
++
++export default function useAdminConfig (authenticated: boolean, acquireToken: () => Promise<string | undefined>) {
++  const [failed, setFailed] = useState(false)
++  const [attempt, setAttempt] = useState(0)
++
++  useEffect(() => {
++    configSignal.value = null
++    setFailed(false)
++    if (!authenticated) return
++
++    const controller = new AbortController()
++    let active = true
++    const timer = setTimeout(() => {
++      controller.abort()
++      if (active) setFailed(true)
++    }, CONFIG_TIMEOUT_MS)
++
++    const load = async () => {
++      try {
++        const token = await acquireToken()
++        if (!active || controller.signal.aborted) return
++        if (!token) throw new Error('Missing access token')
++        const data = await proxyTool.sendNextRequest({
++          endpoint: '/api/info', method: 'GET', token, signal: controller.signal,
++        })
++        if (!active || controller.signal.aborted) return
++        if (!data?.configs || typeof data.configs !== 'object' || Array.isArray(data.configs)) {
++          throw new Error('Invalid admin configuration response')
++        }
++        configSignal.value = data.configs
++      } catch {
++        if (active) setFailed(true)
++      } finally {
++        clearTimeout(timer)
++      }
++    }
++    void load()
++
++    return () => {
++      active = false
++      clearTimeout(timer)
++      controller.abort()
++    }
++  }, [authenticated, acquireToken, attempt])
++
++  return { failed, retry: () => setAttempt((value) => value + 1) }
++}
+diff --git a/admin-panel/tools/proxy.ts b/admin-panel/tools/proxy.ts
+index 7abd40d99a5a8a715910cb2aa334474650d9e341..388dd781db138f443c787ec714a344ee7ffd559a 100644
+--- a/admin-panel/tools/proxy.ts
++++ b/admin-panel/tools/proxy.ts
+@@ -5,11 +5,13 @@ export const sendNextRequest = async ({
+   method,
+   token,
+   body,
++  signal,
+ }: {
+   endpoint: string;
+   method: 'GET' | 'POST' | 'PUT' | 'DELETE';
+   token?: string;
+   body?: object;
++  signal?: AbortSignal;
+ }) => {
+   const res = await fetch(
+     endpoint,
+@@ -20,6 +22,7 @@ export const sendNextRequest = async ({
+         'Content-Type': 'application/json',
+       },
+       body: JSON.stringify(body),
++      signal,
+     },
+   )
+   if (res.ok) {
+diff --git a/admin-panel/translations/en.json b/admin-panel/translations/en.json
+index abee798e5efeb2a1e433ca7605dc2a11aa678b06..28dcd6cea11dcc3bb300db7af5caf668ac7be3ae 100644
+--- a/admin-panel/translations/en.json
++++ b/admin-panel/translations/en.json
+@@ -1,5 +1,7 @@
+ {
+   "layout": {
++    "configLoadFailed": "Unable to load the admin configuration. Retry, or sign out and sign in again if your permissions changed.",
++    "retry": "Retry",
+     "blocked": "Only super admin can access this app.",
+     "brand": "Melody Auth",
+     "logout": "Logout",
+diff --git a/admin-panel/translations/fr.json b/admin-panel/translations/fr.json
+index eaa5441125cdc6162884852d22cdf85a47b9e24a..62e1b35685ea3fbd864f7e82094212d13707f683 100644
+--- a/admin-panel/translations/fr.json
++++ b/admin-panel/translations/fr.json
+@@ -1,5 +1,7 @@
+ {
+   "layout": {
++    "configLoadFailed": "Impossible de charger la configuration. Réessayez ou reconnectez-vous si vos autorisations ont changé.",
++    "retry": "Réessayer",
+     "blocked": "Seul le super administrateur peut accéder à cette application.",
+     "brand": "Melody Auth",
+     "logout": "Déconnexion",
+diff --git a/server/src/__tests__/normal/oauth.test.ts b/server/src/__tests__/normal/oauth.test.ts
+index c031186ccc3df83a7b8ce26b1e3407372cb6b4a9..eca2129bb497737f970f90ddbbc4a29d2110d883 100644
+--- a/server/src/__tests__/normal/oauth.test.ts
++++ b/server/src/__tests__/normal/oauth.test.ts
+@@ -1625,6 +1625,38 @@ describe(
+       },
+     )
+ 
++    test(
++      'refresh reflects current role grants and revocations instead of the login snapshot',
++      async () => {
++        global.process.env.ENFORCE_ONE_MFA_ENROLLMENT = [] as unknown as string
++        try {
++          await insertUsers(db)
++          const tokenRes = await exchangeWithAuthToken(db)
++          const tokenJson = await tokenRes.json() as { refresh_token: string }
++          const refresh = async () => {
++            const response = await app.request(routeConfig.OauthRoute.Token, {
++              method: 'POST',
++              body: new URLSearchParams({
++                grant_type: oauthDto.TokenGrantType.RefreshToken,
++                refresh_token: tokenJson.refresh_token,
++              }).toString(),
++              headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
++            }, mock(db))
++            expect(response.status).toBe(200)
++            const result = await response.json() as { access_token: string }
++            return decode(result.access_token).payload.roles
++          }
++          expect(await refresh()).toEqual([])
++          await db.prepare("INSERT INTO user_role (userId,roleId) SELECT 1,id FROM role WHERE name='super_admin'").run()
++          expect(await refresh()).toContain('super_admin')
++          await db.prepare('UPDATE user_role SET deletedAt=CURRENT_TIMESTAMP WHERE userId=1').run()
++          expect(await refresh()).toEqual([])
++        } finally {
++          global.process.env.ENFORCE_ONE_MFA_ENROLLMENT = ['email', 'otp'] as unknown as string
++        }
++      },
++    )
++
+     test(
+       'should throw error when exchange token with refresh token if user is disabled',
+       async () => {
+diff --git a/server/src/services/oauth.ts b/server/src/services/oauth.ts
+index 8b31d791722ae4c8430e166af9246f9660f5093c..b21394d4a507d390a719e2dccc325ee457a05c1b 100644
+--- a/server/src/services/oauth.ts
++++ b/server/src/services/oauth.ts
+@@ -240,6 +240,9 @@ export const handleRefreshTokenTokenExchange = async (
+     throw new errorConfig.UnAuthorized(messageConfig.RequestError.UserDisabled)
+   }
+ 
++  // Refresh current grants instead of replaying the roles captured at login.
++  const roles = await roleService.getUserRoles(c, user.id)
++
+   const {
+     accessToken,
+     accessTokenExpiresIn,
+@@ -251,7 +254,7 @@ export const handleRefreshTokenTokenExchange = async (
+     refreshTokenBody.authId,
+     refreshTokenBody.clientId,
+     refreshTokenBody.scope,
+-    refreshTokenBody.roles,
++    roles,
+     refreshTokenBody.impersonatedBy,
+   )
+ 
