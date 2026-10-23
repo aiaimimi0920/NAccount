@@ -9,7 +9,7 @@
 ## 仓库结构
 
 其他应用的统一登录面板、PKCE 接入参数与回调校验见 [统一登录接入](docs/UNIFIED_LOGIN.md)。
-新增 `/login` 随 3.2.8 发布，生产更新状态见实施计划 NA-16；原 `/oauth2/v1/authorize` 入口保持兼容。
+新增 `/login` 已随 3.2.8 完成生产更新及独立可用性验证，回执见实施计划 NA-16；原 `/oauth2/v1/authorize` 入口保持兼容。
 
 ```text
 NAccount/

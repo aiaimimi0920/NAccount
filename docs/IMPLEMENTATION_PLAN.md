@@ -1,6 +1,6 @@
 # 初始工程落地范围
 
-## NA-16：统一托管登录面板与请求等待优化（3.2.8 发布进行中，2026-10-24）
+## NA-16：统一托管登录面板与请求等待优化（3.2.8 已上线并独立验证，2026-10-24）
 
 用户授权审视当前账号系统、优先改善访问慢的问题并提供其他应用共用的登录面板。
 本轮基于外层 `7405fbe8`、定制 `471ca790` 的干净工作区，不回退 NA-13/14/15。
@@ -60,9 +60,43 @@ discovery、JWKS 各取两次，共 8 次 HTTP 200。总耗时 1.54–3.77 秒�
 首次/第二次失败日志另存，不以最终通过覆盖历史失败。
 
 发布按既有 topic 定制提交、export/verify、精确 head CI、正常合并、固定 SHA/3.2.8 release、
-SpringBok 原实例 update 和独立 verify 推进。官方 upstream 保持只读，不创建平行生产实例；
-旧 generation 保留，不新增数据库迁移或改动 provider/账号/密钥/域名。具体发布与生产回执随后补记。
+SpringBok 原实例 update 和独立 verify 完成。官方 upstream 保持只读，不创建平行生产实例；
+旧 generation 保留，不新增数据库迁移或改动 provider/账号/密钥/域名。
 本轮没有真实发邮件、短信、外部 OAuth、线上账号变更或并发压测，不声称已解决全部投递或网络延迟。
+
+### 3.2.8 发布与生产回执
+
+- 定制提交 `8a561bb8c3879a2f0ff4f4b0e3ad76d34db14bf0` 的直接 parent 为 `471ca790`，
+  topic 为已声明的 `user-portal`。导出 13 patches，generation
+  `a8b67a696cb76d1f8a63134af2ef01674e6d21a697bb290431adb01aaa0feebc`，export/verify 均通过；
+  主仓库保存 patches、精确历史 bundle 和锁，不向官方上游推送。
+- PR #27 精确 head `e272df67` 的 push/PR CI 均通过，正常合并；main CI
+  [40022663975](https://github.com/aiaimimi0920/NAccount/actions/runs/40022663975) 通过。
+  正式 [v3.2.8](https://github.com/aiaimimi0920/NAccount/releases/tag/v3.2.8) 固定
+  `5c7bced37e743532082c8c54c4f6996ed6c550e6`，独立远端读回与 main 一致。
+  发布前新增根仓完整 110/110 通过；Gitleaks 8.30.1 对实际发布变化扫描无泄漏。
+- 本轮恢复正常管理员浏览器会话，没有创建/复活/延长机器 token，没有修改 Access 策略或控制面。
+  原实例 `dc-082d9d6d909a46c6b41cd149e0de729d`、原 parent `dc-b243e756a5e84ec981c4a19609b901e7`
+  核对后一次提交更新 `dc-386d369d1b9b4e05822c901760dc6810` /
+  [run 40023170325](https://github.com/aiaimimi0920/SpringBok/actions/runs/40023170325)。
+  业务结果 `deployed-unverified`，backup-created/data-preserved/OIDC/JWKS/admin 五检查通过，
+  ZIP SHA-256 为 `43f4e4df657b86227ae87c34b44f23d2fdefa1881b884169f40e43326aa2f99d`。
+- 独立 verify `dc-55bf8b2afe1a4821ad03aed5c5b4b5e9` /
+  [run 40023802434](https://github.com/aiaimimi0920/SpringBok/actions/runs/40023802434) 为 `succeeded`，
+  OIDC/JWKS/admin 三检查通过，ZIP SHA-256 为
+  `917f28b12d8ca76fbda11292ad78fe6944c5949dd4f0a24d0f814931b7362f92`。
+  两份唯一 artifact 的 digest、task/run/source 身份均独立核对；不改写原 update 回执。
+- 独立 Cloudflare 前后快照确认双 Worker deployment 均改变，全部 bindings、运行设置和域名一致。
+  原 D1/KV、provider、公开配置和 secret bindings 保留；没有读出或比较 secret 明文。
+- 线上无 Cookie GET：新 `/login`、signup/reset 各 200，认证 HTML 为 no-store/no-referrer，
+  应用名不能被 query 覆盖、默认 HTML 无 Google Fonts；旧 authorize 仍 302 到原交互视图。
+  account/config/discovery/JWKS 均 200。该 8 次小样本总耗时约 0.94–1.38 秒，不证明因果收益或总体 p95。
+  Edge 真实打开生产重置页并切换登录/注册，显示已验证的应用与返回 origin；没有提交凭据、发码或注册。
+  未见应用错误，存在浏览器扩展自身警告；生产 favicon 与完整密码/MFA/邮件/第三方 OAuth 业务未在本轮重验。
+
+发布证据位于 `linshi/naccount-na16-release-20261024/`：checks/release、根测试、Gitleaks、
+两份 verified-artifact/business-receipt、before/after DPAPI 快照与 comparison、live-smoke、production-ui。
+最终文档提交只保存回执，不改变已部署的固定 v3.2.8 source，也不因此重新部署。
 
 ## NA-15：全界面主题增量发布（已上线并独立验证，2026-10-23）
 
