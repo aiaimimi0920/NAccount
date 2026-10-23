@@ -1,13 +1,24 @@
 # 初始工程落地范围
 
-## NA-15：全界面主题增量发布（进行中，2026-10-23）
+## NA-15：全界面主题增量发布（已上线并独立验证，2026-10-23）
 
 负责人主 AI。用户已明确授权提交推送及 SpringBok 升级；基于外层 `33d3943` 和定制
 `10bccd5` 继续，不覆盖 NA-13/NA-14 性能更新。版本 3.2.7 不增加迁移、不更改 provider、
 账号、密钥、D1/KV、Workers、域名或既有配置。仅提交本轮主题、branding 请求内复用、
 弹窗可访问性及保护测试；定制先提交再 export/verify。原实例 update 和独立 verify 分开
 执行，未知结果不重放。详细本地验证见 [全界面统一](NEURO_UI_UNIFICATION.md)。
-提交、精确 head CI、发行和生产回执尚待逐项完成，不把既有 3.2.6 验收当作本版已上线。
+PR #25 正常合并，main CI `39945699531` 通过；正式 v3.2.7 固定
+`f306f3e040509d608d7e29a15f99a42df31e94cc`。定制 `471ca790` 直接基于 `10bccd5`，
+12 补丁 export/verify 通过；原性能更新、旧 generation 与 immutable tags 保留。
+原实例 update `dc-b243e756a5e84ec981c4a19609b901e7` / run `39949925541` 五检查通过，
+原回执保持 `deployed-unverified`；独立 verify `dc-0fc9414c82934392938e7ea5b64b4545` /
+run `39950926985` 为 `succeeded`、三检查通过。唯一 artifact、ZIP digest、task/run/source 身份
+均已独立核对。双 Worker deployment 改变，全部 bindings、runtime settings 和 domains 与升级前一致。
+旧 UI 提交未确认任务未重放：另经用户明确批准，平台两侧确认无 reservation/bootstrap 后建立防迟到栅栏，
+才从同一原 parent 生成新计划并一次性提交。新建两小时精确维护授权已禁用、原控制配置已恢复，
+无 Cookie 负向探针 302。没有解锁、转移锁、删除数据或修改旧部署回执。
+正式工作台到 NAccount authorize 的接入与默认深色主题已核验；本轮不复用 3.2.6 的完整真实登录/MFA 结果
+冒称新版全业务重验。详细回执、生产观察和剩余边界见 [全界面统一](NEURO_UI_UNIFICATION.md#327-生产升级与独立验证)。
 
 ## NA-14-RELEASE：3.2.6 原实例更新与真实业务验收（已上线并通过，2026-10-23）
 
