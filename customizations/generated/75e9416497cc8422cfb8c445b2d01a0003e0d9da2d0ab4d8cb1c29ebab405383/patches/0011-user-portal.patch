@@ -1,0 +1,569 @@
+From 10bccd55191f8c647a0a8a29412e55582ab990b0 Mon Sep 17 00:00:00 2001
+From: aiaimimi0920 <153103332+aiaimimi0920@users.noreply.github.com>
+Date: Fri, 23 Oct 2026 17:47:35 +0800
+Subject: [PATCH] NA-14: combine portal bootstrap reads and cancel abandoned
+ view requests
+
+NAccount-Patch-Topic: user-portal
+---
+ .../__tests__/normal/account-latency.test.ts  | 22 ++++++++-
+ .../__tests__/normal/account-profile.test.ts  | 32 +++++++++++++
+ server/src/pages/account/Account.test.tsx     | 16 ++++++-
+ server/src/pages/account/Account.tsx          | 18 ++++---
+ .../src/pages/account/Applications.test.tsx   | 22 ++++++++-
+ server/src/pages/account/Applications.tsx     |  5 +-
+ .../src/pages/account/SocialAccounts.test.tsx | 48 ++++++++++++++++++-
+ server/src/pages/account/SocialAccounts.tsx   | 21 ++++----
+ server/src/pages/account/auth.test.ts         | 20 +++++++-
+ server/src/pages/account/auth.ts              | 13 ++++-
+ server/src/services/accountProfile.ts         | 13 ++++-
+ server/src/services/accountSocial.ts          | 12 +++--
+ 12 files changed, 211 insertions(+), 31 deletions(-)
+
+diff --git a/server/src/__tests__/normal/account-latency.test.ts b/server/src/__tests__/normal/account-latency.test.ts
+index 0816c13b11c0cc9090e0ece51fcce28919d35a74..4edcc14c2eefb12122724f163dc5cc25092c1fd8 100644
+--- a/server/src/__tests__/normal/account-latency.test.ts
++++ b/server/src/__tests__/normal/account-latency.test.ts
+@@ -34,12 +34,32 @@ describe('authenticated portal round-trip budget', () => {
+     expect(reads).toHaveBeenCalledTimes(2)
+   })
+ 
++  it('combines first-render profile and social data in four D1 statements with one current-user check', async () => {
++    const reads = vi.spyOn(env.DB, 'prepare')
++    const keys = vi.spyOn(env.KV, 'get')
++    const separateProfile = await (await get()).json() as Record<string, unknown>
++    const separateSocial = await (await get('/account/api/social')).json()
++    expect(reads).toHaveBeenCalledTimes(6)
++    expect(keys).toHaveBeenCalledTimes(2)
++    reads.mockClear(); keys.mockClear()
++    const users = vi.spyOn(userModel, 'getByAuthId')
++    const response = await get('/account/api/profile?include=social')
++    expect(response.status).toBe(200)
++    expect(await response.json()).toEqual({ ...separateProfile, social: separateSocial })
++    expect(response.headers.get('Cache-Control')).toBe('no-store')
++    expect(users).toHaveBeenCalledTimes(1)
++    // Current user, portal client, profile card, linked identities. No second bearer lookup.
++    expect(reads).toHaveBeenCalledTimes(4)
++    expect(keys).toHaveBeenCalledTimes(1)
++  })
++
+   it.each(['version', 'disabled', 'deleted'])('does not cache the user across requests after %s changes', async (kind) => {
+-    expect((await get()).status).toBe(200)
++    expect((await get('/account/api/profile?include=social')).status).toBe(200)
+     if (kind === 'version') db.prepare('UPDATE user SET securityVersion=securityVersion+1').run()
+     if (kind === 'disabled') db.prepare('UPDATE user SET isActive=0').run()
+     if (kind === 'deleted') db.prepare('UPDATE user SET deletedAt=CURRENT_TIMESTAMP').run()
+     expect((await get()).status).toBe(401)
++    expect((await get('/account/api/profile?include=social')).status).toBe(401)
+   })
+ 
+   it('loads 100 public apps in one catalogue statement and preserves explicit catalogue order', async () => {
+diff --git a/server/src/__tests__/normal/account-profile.test.ts b/server/src/__tests__/normal/account-profile.test.ts
+index b9c0ace35dd876fcd4a8433f342352ec0accdc68..ea6c84d3fc864ee916c5c5827d9bb2fa2df51e7e 100644
+--- a/server/src/__tests__/normal/account-profile.test.ts
++++ b/server/src/__tests__/normal/account-profile.test.ts
+@@ -4,6 +4,7 @@ import { migrate, mock } from 'tests/mock'
+ import { typeConfig } from 'configs'
+ import { jwtService } from 'services'
+ import account from 'routes/account'
++import * as social from 'services/accountSocial'
+ 
+ let db: Database
+ let env: typeConfig.Bindings
+@@ -42,12 +43,43 @@ describe('portal profile and catalogue (D1)', () => {
+     expect(db.prepare('SELECT firstName FROM user WHERE authId=?').get('owner')).toEqual({firstName:'Original'})
+     expect((await patch({signature:''})).status).toBe(200)
+   })
++  it('only includes the current actor social DTO on explicit GET opt-in', async () => {
++    db.prepare('INSERT INTO naccount_social_identity(provider,subject,userId,label) SELECT ?,?,id,? FROM user WHERE authId=?')
++      .run('GitHub','private-subject','owned-link-label','owner')
++    const owner = await (await get('/account/api/profile?include=social')).json() as any
++    const other = await (await get('/account/api/profile?include=social','other')).json() as any
++    expect(owner.social.canManage).toBe(true)
++    expect(other.social.canManage).toBe(false)
++    expect(owner.social.providers.map((entry: any) => entry.provider)).toEqual(['Google','GitHub'])
++    expect(owner.social.providers.find((entry: any) => entry.provider==='GitHub')).toMatchObject({bound:true,label:'owned-link-label'})
++    expect(JSON.stringify(other)).not.toContain('owned-link-label')
++    expect(JSON.stringify(owner)).not.toContain('private-')
++    expect((await (await get('/account/api/profile?include=unknown')).json() as any).social).toBeUndefined()
++    const response = await account.request('/account/api/profile?include=social', {
++      method:'PATCH',headers:{Authorization:'Bearer owner','Content-Type':'application/json'},body:JSON.stringify({nickname:'Owner'}),
++    },env)
++    expect(response.status).toBe(200)
++    expect((await response.json() as any).social).toBeUndefined()
++    db.prepare('DELETE FROM naccount_social_identity WHERE provider=?').run('GitHub')
++    const refreshed = await (await get('/account/api/profile?include=social')).json() as any
++    expect(refreshed.social.providers.find((entry: any) => entry.provider==='GitHub')).toMatchObject({bound:false,label:null})
++  })
++  it('keeps optional social-read failure isolated from a successful profile/login', async () => {
++    vi.spyOn(social,'readStatus').mockRejectedValue(new Error('private provider/SQL details'))
++    const response = await get('/account/api/profile?include=social')
++    expect(response.status).toBe(200)
++    const body = await response.json() as any
++    expect(body.authId).toBe('owner')
++    expect(body.social).toBeUndefined()
++    expect(JSON.stringify(body)).not.toContain('private')
++  })
+   it.each([{nickname:''},{nickname:'x'.repeat(41)},{signature:'x'.repeat(121)},{nickname:' x'}, {signature:'line\nbreak'}, {authId:'other'}, {nickname:'x',authId:'other'}, null, [], {signature:42}])('rejects invalid or identity-controlling input %j', async (body) => {
+     expect((await patch(body)).status).not.toBe(200)
+     expect(db.prepare('SELECT COUNT(*) AS count FROM naccount_profile').get()).toEqual({count:0})
+   })
+   it.each(['wrong-client','no-profile','invalid'])('rejects inappropriate token %s on all surfaces', async (token) => {
+     expect((await get('/account/api/profile',token)).status).not.toBe(200)
++    expect((await get('/account/api/profile?include=social',token)).status).not.toBe(200)
+     expect((await get('/account/api/apps',token)).status).not.toBe(200)
+     expect((await patch({nickname:'x'},token)).status).not.toBe(200)
+   })
+diff --git a/server/src/pages/account/Account.test.tsx b/server/src/pages/account/Account.test.tsx
+index f6c7865239a40c833c7afabec63268e825561907..1aad79e586677b6cd9ac755ea6eae59970f039ac 100644
+--- a/server/src/pages/account/Account.test.tsx
++++ b/server/src/pages/account/Account.test.tsx
+@@ -3,7 +3,9 @@ import { render } from 'hono/jsx/dom'
+ import { fireEvent, getByRole, queryByRole, waitFor } from '@testing-library/dom'
+ import Account from './Account'
+ import * as auth from './auth'
+-vi.mock('./SocialAccounts', () => ({ default: () => <section>Social accounts fixture</section> }))
++import SocialAccounts from './SocialAccounts'
++vi.mock('./SocialAccounts', () => ({ default: vi.fn(() => <section>Social accounts fixture</section>) }))
++vi.mock('./Applications', () => ({ default: () => <section aria-label='应用管理'>Applications fixture</section> }))
+ 
+ vi.mock('./auth', async (original) => ({
+   ...await original<typeof import('./auth')>(),
+@@ -61,6 +63,18 @@ describe('ordinary-user account center', () => {
+     await waitFor(() => expect(container.textContent).toContain('<img src=x'))
+     expect(container.querySelector('img[src=x]')).toBeNull()
+   })
++  it('discards the first-render social seed on navigation, so returning to profile requires fresh status', async () => {
++    const social: auth.SocialStatus = {canManage:false,providers:[]}
++    vi.mocked(auth.restore).mockResolvedValue('access')
++    vi.mocked(auth.profile).mockResolvedValue({authId:'user',email:'user@example.test',emailVerified:true,social})
++    render(<Account />,container)
++    await waitFor(() => expect(vi.mocked(SocialAccounts).mock.calls.at(-1)?.[0].initialStatus).toEqual(social))
++    window.location.hash='#apps'; window.dispatchEvent(new HashChangeEvent('hashchange'))
++    await waitFor(() => expect(getByRole(container,'region',{name:'应用管理'})).toBeTruthy())
++    window.location.hash='#profile'; window.dispatchEvent(new HashChangeEvent('hashchange'))
++    await waitFor(() => expect(vi.mocked(SocialAccounts).mock.calls.at(-1)?.[0].initialStatus).toBeUndefined())
++    expect(vi.mocked(SocialAccounts).mock.calls.at(-1)?.[0].accessToken).toBe('access')
++  })
+   it('ends loading and allows recovery after failed userinfo', async () => {
+     vi.mocked(auth.restore).mockResolvedValue('access')
+     vi.mocked(auth.profile).mockRejectedValue(new auth.PortalError('SESSION_EXPIRED'))
+diff --git a/server/src/pages/account/Account.tsx b/server/src/pages/account/Account.tsx
+index ea0577a44fe58b95f8112d588b346e9b164a1caa..7800a1816d8565b4284dc23ee0a633ad99a4953f 100644
+--- a/server/src/pages/account/Account.tsx
++++ b/server/src/pages/account/Account.tsx
+@@ -18,6 +18,7 @@ export default function Account() {
+   const [config, setConfig] = useState<auth.PortalConfig | null>(null)
+   const [user, setUser] = useState<auth.Profile | null>(null)
+   const [accessToken, setAccessToken] = useState<string | null>(null)
++  const [initialSocial, setInitialSocial] = useState<auth.SocialStatus | undefined>()
+   const [busy, setBusy] = useState(true)
+   const [error, setError] = useState('')
+   const [notice, setNotice] = useState('')
+@@ -29,7 +30,10 @@ export default function Account() {
+   const menuRef = useRef<HTMLDivElement>(null)
+   const menuButton = useRef<HTMLButtonElement>(null)
+   useEffect(() => {
+-    const navigate = () => setSection(window.location.hash === '#apps' ? 'apps' : 'profile')
++    const navigate = () => {
++      setInitialSocial(undefined)
++      setSection(window.location.hash === '#apps' ? 'apps' : 'profile')
++    }
+     const outside = (event: MouseEvent) => { if (!menuRef.current?.contains(event.target as Node)) setMenu(false) }
+     const escape = (event: KeyboardEvent) => {
+       if (event.key === 'Escape' && menuRef.current?.contains(document.activeElement)) { setMenu(false); menuButton.current?.focus() }
+@@ -44,7 +48,7 @@ export default function Account() {
+   }, [notice])
+   useEffect(() => {
+     let cancelled = false
+-    setBusy(true); setError(''); setUser(null); setAccessToken(null); setConfig(null)
++    setBusy(true); setError(''); setUser(null); setAccessToken(null); setInitialSocial(undefined); setConfig(null)
+     const load = async () => {
+       try {
+         const nextConfig = await auth.request<auth.PortalConfig>('/account/config')
+@@ -58,7 +62,7 @@ export default function Account() {
+         const token = await auth.restore(nextConfig)
+         if (cancelled) return
+         const nextUser = token ? await auth.profile(nextConfig, token) : null
+-        if (!cancelled) { setAccessToken(token); setUser(nextUser) }
++        if (!cancelled) { setAccessToken(token); setUser(nextUser); setInitialSocial(nextUser?.social) }
+       } catch (cause) {
+         if (!cancelled) setError(errors[cause instanceof auth.PortalError ? cause.code : 'REQUEST_FAILED'])
+       } finally { if (!cancelled) setBusy(false) }
+@@ -88,7 +92,7 @@ export default function Account() {
+         {user && <div class='user-menu' ref={menuRef}><button class='user-toggle' ref={menuButton} aria-label='用户菜单' aria-expanded={menu ? 'true' : 'false'} aria-controls='user-dropdown'
+           onClick={() => setMenu(!menu)}><Icon name='user' /></button>
+           {menu && <div class='user-dropdown' id='user-dropdown'><button disabled={busy} onClick={() => { setMenu(false); void run(async () => {
+-            setUser(null); setAccessToken(null); setDialog(null)
++            setUser(null); setAccessToken(null); setInitialSocial(undefined); setDialog(null)
+             await auth.logout(config!, accessToken)
+           }) }}><Icon name='exit' />退出登录</button></div>}
+         </div>}
+@@ -114,7 +118,7 @@ export default function Account() {
+         <div class='binding-row'><div class='binding-value'><Icon name='mail' /><span>{user.email || '未绑定邮箱'}</span>{user.email && !user.emailVerified && <span class='muted'>未验证</span>}</div>
+           <button class='btn' disabled={busy} onClick={() => setDialog('email')}>{user.email ? '换绑' : '绑定'}</button></div>
+         <div class='binding-row'><div class='binding-value'><Icon name='phone' /><span>{user.phone || '未绑定手机号'}</span></div><button class='btn' onClick={() => setDialog('phone')}>{user.phone ? '换绑' : '绑定'}</button></div>
+-        <SocialAccounts accessToken={accessToken} />
++        <SocialAccounts accessToken={accessToken} initialStatus={initialSocial} />
+         <div class='account-actions'><button class='btn' disabled={busy} onClick={() => setDialog(user.otpEnabled ? 'otp-disable' : 'otp-enable')}>{user.otpEnabled ? '禁用两步验证' : '启用两步验证'}</button>
+           <button class='btn' disabled={busy} onClick={() => setDialog('password')}>修改密码</button>
+           <button class='btn danger' onClick={() => setDialog('delete')}>删除账户</button></div>
+@@ -123,10 +127,10 @@ export default function Account() {
+     </main>
+     {notice && <div class='toast' role='status'>{notice}</div>}
+     {authDialog && config && <AuthDialog config={config} signup={authDialog === 'signup'} onClose={() => setAuthDialog(null)}
+-      onAuthenticated={(token, nextUser) => { setAccessToken(token); setUser(nextUser); setAuthDialog(null); setError('') }} />}
++      onAuthenticated={(token, nextUser) => { setAccessToken(token); setUser(nextUser); setInitialSocial(nextUser.social); setAuthDialog(null); setError('') }} />}
+     {dialog && accessToken && <SecurityDialog action={dialog} accessToken={accessToken} onClose={() => setDialog(null)}
+       onCompleted={(deleted) => {
+-        setDialog(null); setUser(null); setAccessToken(null)
++        setDialog(null); setUser(null); setAccessToken(null); setInitialSocial(undefined)
+         setNotice(deleted ? '账户已注销' : '修改成功，请重新登录')
+       }} />}
+   </div>
+diff --git a/server/src/pages/account/Applications.test.tsx b/server/src/pages/account/Applications.test.tsx
+index 6ff3f6adf0f3a94cf2695d3bc58997868d831896..655ebfa58b66cf7809df1201f666e36edc193fda 100644
+--- a/server/src/pages/account/Applications.test.tsx
++++ b/server/src/pages/account/Applications.test.tsx
+@@ -1,5 +1,6 @@
+ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+ import { render } from 'hono/jsx/dom'
++import { useState } from 'hono/jsx'
+ import { fireEvent, getByRole, waitFor } from '@testing-library/dom'
+ import Applications from './Applications'
+ import { request } from './auth'
+@@ -16,7 +17,7 @@ describe('portal applications',()=>{
+     fireEvent.keyDown(getByRole(container,'tab',{name:'已授权应用'}),{key:'ArrowRight'})
+     await waitFor(()=>expect(getByRole(container,'tabpanel').textContent).toContain('公开测试应用'))
+     expect(getByRole(container,'tab',{name:'全部应用'}).getAttribute('aria-selected')).toBe('true')
+-    expect(request).toHaveBeenCalledWith('/account/api/apps',{headers:{Authorization:'Bearer token'}})
++    expect(request).toHaveBeenCalledWith('/account/api/apps',{headers:{Authorization:'Bearer token'},signal:expect.anything()})
+   })
+   it('does not present a request failure as an empty catalogue',async()=>{
+     vi.mocked(request).mockRejectedValue(new Error('secret'))
+@@ -27,4 +28,23 @@ describe('portal applications',()=>{
+     fireEvent.click(getByRole(container,'button',{name:'重试'}))
+     await waitFor(()=>expect(container.textContent).toContain('暂无授权应用'))
+   })
++  it('aborts an abandoned catalogue request and ignores its late result after an account change',async()=>{
++    let resolveOld: (value:unknown)=>void = () => {}
++    vi.mocked(request).mockImplementationOnce(()=>new Promise(resolve=>{resolveOld=resolve}))
++    function Host() {
++      const [token,setToken]=useState('old-token')
++      return <div><button onClick={()=>setToken('new-token')}>Switch account</button><Applications accessToken={token}/></div>
++    }
++    render(<Host/>,container)
++    await waitFor(()=>expect(request).toHaveBeenCalledTimes(1))
++    const signal=vi.mocked(request).mock.calls[0][1]!.signal!
++    vi.mocked(request).mockResolvedValue({apps:[{clientId:'new',name:'Current catalogue',authorized:true}]})
++    fireEvent.click(getByRole(container,'button',{name:'Switch account'}))
++    await waitFor(()=>expect(container.textContent).toContain('Current catalogue'))
++    expect(signal.aborted).toBe(true)
++    resolveOld({apps:[{clientId:'old',name:'Stale catalogue',authorized:true}]})
++    await new Promise(resolve=>setTimeout(resolve,0))
++    expect(container.textContent).not.toContain('Stale catalogue')
++    expect(request).toHaveBeenCalledTimes(2)
++  })
+ })
+diff --git a/server/src/pages/account/Applications.tsx b/server/src/pages/account/Applications.tsx
+index d04f533e570b679656c316365fe93e0978648860..3bd587b527fd8e1cbab8f302152795d79929cbbd 100644
+--- a/server/src/pages/account/Applications.tsx
++++ b/server/src/pages/account/Applications.tsx
+@@ -11,11 +11,12 @@ export default function Applications({ accessToken }: { accessToken: string }) {
+   const tabs = useRef<HTMLDivElement>(null)
+   useEffect(() => {
+     let stale = false
++    const controller = new AbortController()
+     setApps(null); setError(false)
+-    void request<{ apps: App[] }>('/account/api/apps', { headers: { Authorization: `Bearer ${accessToken}` } })
++    void request<{ apps: App[] }>('/account/api/apps', { headers: { Authorization: `Bearer ${accessToken}` }, signal: controller.signal })
+       .then((value) => { if (!stale) setApps(value.apps) })
+       .catch(() => { if (!stale) setError(true) })
+-    return () => { stale = true }
++    return () => { stale = true; controller.abort() }
+   }, [accessToken, attempt])
+   const visible = apps?.filter((app) => tab === 'all' || app.authorized)
+   return <section class='application-card' aria-label='应用管理'>
+diff --git a/server/src/pages/account/SocialAccounts.test.tsx b/server/src/pages/account/SocialAccounts.test.tsx
+index c950333bbfc9ff51cb45f04a5874d85d045014c8..464fbfa68c227cc38ad89e7660a4c0783fd2fcc4 100644
+--- a/server/src/pages/account/SocialAccounts.test.tsx
++++ b/server/src/pages/account/SocialAccounts.test.tsx
+@@ -1,8 +1,9 @@
+ import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
+ import { render } from 'hono/jsx/dom'
++import { useState } from 'hono/jsx'
+ import { fireEvent, getByRole, getByLabelText, waitFor } from '@testing-library/dom'
+ import SocialAccounts from './SocialAccounts'
+-import { request } from './auth'
++import { request, SocialStatus } from './auth'
+ vi.mock('./auth', () => ({ request: vi.fn() }))
+ let container: HTMLDivElement
+ beforeEach(() => {
+@@ -16,6 +17,38 @@ beforeEach(() => {
+ })
+ afterEach(() => { render(null, container); container.remove(); vi.restoreAllMocks() })
+ describe('social account management', () => {
++  const initialStatus: SocialStatus = { canManage:true, providers:[
++    {provider:'Google',available:true,bound:false,primary:false,label:null},
++    {provider:'GitHub',available:true,bound:true,primary:false,label:'first-render-only'},
++  ] }
++  it('uses same-response first-render status without a second network request', async () => {
++    render(<SocialAccounts accessToken='token' initialStatus={initialStatus} />, container)
++    await waitFor(() => expect(container.textContent).toContain('first-render-only'))
++    expect(request).not.toHaveBeenCalled()
++  })
++  it('fetches fresh status when revisiting the profile rather than retaining its initial seed', async () => {
++    render(<SocialAccounts accessToken='token' initialStatus={initialStatus} />, container)
++    await waitFor(() => expect(container.textContent).toContain('first-render-only'))
++    render(null, container)
++    await waitFor(() => expect(container.textContent).toBe(''))
++    render(<SocialAccounts accessToken='token' />, container)
++    await waitFor(() => expect(container.textContent).toContain('github-user'))
++    expect(container.textContent).not.toContain('first-render-only')
++    expect(request).toHaveBeenCalledTimes(1)
++  })
++  it('does not reuse the initial status after a successful unlink', async () => {
++    render(<SocialAccounts accessToken='token' initialStatus={initialStatus} />, container)
++    await waitFor(() => expect(container.textContent).toContain('first-render-only'))
++    fireEvent.click(getByRole(container,'button',{name:'解绑 GitHub'}))
++    await waitFor(() => expect(getByRole(container,'dialog',{name:'解绑 GitHub'})).toBeTruthy())
++    fireEvent.input(getByLabelText(container,'确认当前密码'), {target:{value:'fixture-only'}})
++    vi.mocked(request).mockResolvedValueOnce({success:true})
++    await waitFor(() => expect((getByRole(container,'button',{name:'确认解绑'}) as HTMLButtonElement).disabled).toBe(false))
++    fireEvent.click(getByRole(container,'button',{name:'确认解绑'}))
++    await waitFor(() => expect(request).toHaveBeenCalledWith('/account/api/social',expect.anything()))
++    await waitFor(() => expect(container.textContent).toContain('github-user'))
++    expect(container.textContent).not.toContain('first-render-only')
++  })
+   it('shows truthful binding status and requires password confirmation', async () => {
+     render(<SocialAccounts accessToken='ordinary-user-token' />, container)
+     await waitFor(() => expect(container.textContent).toContain('github-user'))
+@@ -23,6 +56,19 @@ describe('social account management', () => {
+     await waitFor(() => expect(getByRole(container, 'dialog', { name: '绑定 Google' })).toBeTruthy())
+     expect((getByRole(container, 'button', { name: '继续授权' }) as HTMLButtonElement).disabled).toBe(true)
+   })
++  it('aborts a social read when its view is left, without issuing a replacement request',async()=>{
++    vi.mocked(request).mockImplementationOnce(()=>new Promise(()=>{}))
++    function Host() {
++      const [visible,setVisible]=useState(true)
++      return <div><button onClick={()=>setVisible(false)}>Leave profile</button>{visible&&<SocialAccounts accessToken='token'/>}</div>
++    }
++    render(<Host/>,container)
++    await waitFor(()=>expect(request).toHaveBeenCalledTimes(1))
++    const signal=vi.mocked(request).mock.calls[0][1]!.signal!
++    fireEvent.click(getByRole(container,'button',{name:'Leave profile'}))
++    await waitFor(()=>expect(signal.aborted).toBe(true))
++    expect(request).toHaveBeenCalledTimes(1)
++  })
+   it('cancels unlink without any mutation request', async () => {
+     const nativeConfirm = vi.spyOn(window, 'confirm')
+     render(<SocialAccounts accessToken='token' />, container)
+diff --git a/server/src/pages/account/SocialAccounts.tsx b/server/src/pages/account/SocialAccounts.tsx
+index 468aa24f40789eda436e63f8ab506d820da4d254..7a35b0233307cdff196813d753ef04a31f51b96f 100644
+--- a/server/src/pages/account/SocialAccounts.tsx
++++ b/server/src/pages/account/SocialAccounts.tsx
+@@ -1,14 +1,11 @@
+ import { useEffect, useState } from 'hono/jsx'
+-import { request } from './auth'
++import { request, SocialProvider, SocialStatus } from './auth'
+ import Dialog from './Dialog'
+ import Icon from './Icons'
+ 
+-interface Provider { provider: 'Google' | 'GitHub'; available: boolean; bound: boolean; primary: boolean; label: string | null }
+-interface SocialStatus { canManage: boolean; providers: Provider[] }
+-
+-export default function SocialAccounts({ accessToken }: { accessToken: string }) {
++export default function SocialAccounts({ accessToken, initialStatus }: { accessToken: string; initialStatus?: SocialStatus }) {
+   const [status, setStatus] = useState<SocialStatus | null>(null)
+-  const [selected, setSelected] = useState<Provider | null>(null)
++  const [selected, setSelected] = useState<SocialProvider | null>(null)
+   const [password, setPassword] = useState('')
+   const [busy, setBusy] = useState(false)
+   const [error, setError] = useState('')
+@@ -16,13 +13,17 @@ export default function SocialAccounts({ accessToken }: { accessToken: string })
+   const headers = { Authorization: 'Bearer ' + accessToken, 'Content-Type': 'application/json' }
+   useEffect(() => {
+     let stale = false
++    const controller = new AbortController()
+     setStatus(null); setBusy(true); setError('')
+-    void request<SocialStatus>('/account/api/social', { headers }).then((value) => {
++    const result = attempt === 0 && initialStatus
++      ? Promise.resolve(initialStatus)
++      : request<SocialStatus>('/account/api/social', { headers, signal: controller.signal })
++    void result.then((value) => {
+       if (!stale) setStatus(value)
+     }).catch(() => { if (!stale) setError('无法读取社交账号，请重试或重新登录。') })
+       .finally(() => { if (!stale) setBusy(false) })
+-    return () => { stale = true }
+-  }, [accessToken, attempt])
++    return () => { stale = true; controller.abort() }
++  }, [accessToken, attempt, initialStatus])
+   const close = () => { setSelected(null); setPassword(''); setError('') }
+   const act = async () => {
+     if (busy || !password || !selected) return
+@@ -60,4 +61,4 @@ export default function SocialAccounts({ accessToken }: { accessToken: string })
+       </form>
+     </Dialog>}
+   </div>
+-}
+\ No newline at end of file
++}
+diff --git a/server/src/pages/account/auth.test.ts b/server/src/pages/account/auth.test.ts
+index 985306b0e4d8e78cb963fa8c5b17b018c4432254..3a6743572fb9448bf3e0ea94089e108081878ce9 100644
+--- a/server/src/pages/account/auth.test.ts
++++ b/server/src/pages/account/auth.test.ts
+@@ -124,8 +124,9 @@ describe('portal authorization boundaries', () => {
+   it('reads only the current user endpoint', async () => {
+     fetchMock.mockResolvedValue(Response.json({ authId: 'ordinary-user', emailVerified: true }))
+     expect(await profile(config, 'access')).toMatchObject({ authId: 'ordinary-user' })
+-    expect(fetchMock.mock.calls[0][0]).toBe(`${config.serverUri}/account/api/profile`)
++    expect(fetchMock.mock.calls[0][0]).toBe(`${config.serverUri}/account/api/profile?include=social`)
+     expect(fetchMock.mock.calls[0][1].headers).toEqual({ Authorization: 'Bearer access' })
++    expect(fetchMock.mock.calls[0][1].cache).toBe('no-store')
+   })
+   it('clears local state even if remote logout fails, without claiming remote success', async () => {
+     sessionStorage.setItem(refreshKey, JSON.stringify({ clientId: config.clientId, token: 'refresh' }))
+@@ -149,6 +150,23 @@ describe('portal authorization boundaries', () => {
+     await vi.advanceTimersByTimeAsync(15000)
+     await result
+   })
++  it('honors caller cancellation without replacing the 15-second timeout or replaying the request', async () => {
++    const caller = new AbortController()
++    fetchMock.mockImplementation((_url, {signal}) => new Promise((_resolve,reject) => {
++      signal.addEventListener('abort',() => reject(new Error('aborted')))
++    }))
++    const result=expect(request('/account/api/apps',{signal:caller.signal})).rejects.toMatchObject({code:'NETWORK_ERROR'})
++    caller.abort()
++    await result
++    expect(fetchMock.mock.calls[0][1].signal.aborted).toBe(true)
++    expect(fetchMock).toHaveBeenCalledTimes(1)
++  })
++  it('keeps an already-cancelled caller signal cancelled', async () => {
++    const caller=new AbortController(); caller.abort()
++    fetchMock.mockImplementation((_url,{signal})=>signal.aborted?Promise.reject(new Error('aborted')):Promise.resolve(Response.json({})))
++    await expect(request('/account/api/social',{signal:caller.signal})).rejects.toMatchObject({code:'NETWORK_ERROR'})
++    expect(fetchMock.mock.calls[0][1].signal.aborted).toBe(true)
++  })
+   it('does not erase other applications storage', () => {
+     sessionStorage.setItem('another-app', 'keep')
+     clearSession()
+diff --git a/server/src/pages/account/auth.ts b/server/src/pages/account/auth.ts
+index 4f4826c1ce24ac67e6bd8059e82d46de9708a7ee..bb3833486d09d770547132ddefb7f11384a706c9 100644
+--- a/server/src/pages/account/auth.ts
++++ b/server/src/pages/account/auth.ts
+@@ -6,6 +6,11 @@ export interface PortalConfig {
+   policies: string[];
+ }
+ 
++export interface SocialProvider {
++  provider: 'Google' | 'GitHub'; available: boolean; bound: boolean; primary: boolean; label: string | null;
++}
++export interface SocialStatus { canManage: boolean; providers: SocialProvider[] }
++
+ export interface Profile {
+   authId: string;
+   email: string | null;
+@@ -18,6 +23,7 @@ export interface Profile {
+   otpEnabled?: boolean;
+   canEdit?: boolean;
+   canUsePolicies?: boolean;
++  social?: SocialStatus;
+ }
+ 
+ const transactionKey = 'naccount.portal.transaction'
+@@ -32,6 +38,10 @@ export class PortalError extends Error {
+ 
+ export async function request<T>(url: string, options: RequestInit = {}): Promise<T> {
+   const controller = new AbortController()
++  const callerSignal = options.signal
++  const abort = () => controller.abort()
++  if (callerSignal?.aborted) abort()
++  else callerSignal?.addEventListener('abort', abort, { once: true })
+   const timer = setTimeout(() => controller.abort(), 15000)
+   try {
+     const response = await fetch(url, { ...options, signal: controller.signal, cache: 'no-store' })
+@@ -45,6 +55,7 @@ export async function request<T>(url: string, options: RequestInit = {}): Promis
+     throw new PortalError('NETWORK_ERROR')
+   } finally {
+     clearTimeout(timer)
++    callerSignal?.removeEventListener('abort', abort)
+   }
+ }
+ 
+@@ -142,7 +153,7 @@ export async function restore(config: PortalConfig, callback?: URL, active = ()
+   }
+ }
+ 
+-export const profile = (config: PortalConfig, accessToken: string) => request<Profile>(`${config.serverUri}/account/api/profile`, {
++export const profile = (config: PortalConfig, accessToken: string) => request<Profile>(`${config.serverUri}/account/api/profile?include=social`, {
+   headers: { Authorization: `Bearer ${accessToken}` },
+ })
+ 
+diff --git a/server/src/services/accountProfile.ts b/server/src/services/accountProfile.ts
+index a98ec2c85aa91779ec4b404768374412daef0b24..161eeb25443926e0aad5ece3af208d8febc92c2e 100644
+--- a/server/src/services/accountProfile.ts
++++ b/server/src/services/accountProfile.ts
+@@ -2,14 +2,22 @@ import { Context } from 'hono'
+ import { HTTPException } from 'hono/http-exception'
+ import { ClientType } from '@melody-auth/shared'
+ import { errorConfig, typeConfig } from 'configs'
+-import { actor } from './accountSocial'
++import { actor, readStatus } from './accountSocial'
+ 
+ interface Card { nickname: string; signature: string; phone: string | null }
+ const denied = () => new errorConfig.Forbidden('NACCOUNT_PROFILE_REQUEST_DENIED')
+ 
+ export const profile = async (c: Context<typeConfig.Context>) => {
+   const user = await actor(c)
+-  const card = await c.env.DB.prepare('SELECT nickname, signature, phone FROM naccount_profile WHERE userId=$1').bind(user.id).first<Card>()
++  // The first portal render can include social status without a second bearer/portal lookup.
++  // Both reads use this request's validated actor; subsequent requests still validate afresh.
++  const includeSocial = c.req.method === 'GET' && c.req.query('include') === 'social'
++  const [card, social] = await Promise.all([
++    c.env.DB.prepare('SELECT nickname, signature, phone FROM naccount_profile WHERE userId=$1').bind(user.id).first<Card>(),
++    // Optional decoration must not turn a social-query failure into a failed login.
++    // Omission lets the existing social surface retry/show its own truthful error.
++    includeSocial ? readStatus(c, user).catch(() => undefined) : undefined,
++  ])
+   // Keep the portal DTO explicit: never serialize the user model (password, OTP secret, recovery hash).
+   return c.json({
+     authId: user.authId, email: user.email, emailVerified: user.emailVerified,
+@@ -19,6 +27,7 @@ export const profile = async (c: Context<typeConfig.Context>) => {
+     otpEnabled: user.otpVerified,
+     canUsePolicies: !!(user.email && !user.socialAccountId),
+     canEdit: !(c.env.BLOCKED_POLICIES ?? []).includes('update_info'),
++    ...(social ? { social } : {}),
+   })
+ }
+ 
+diff --git a/server/src/services/accountSocial.ts b/server/src/services/accountSocial.ts
+index aa2cc44d804086be217cca9aa471df24ad31f824..13b5128f38384acf7c68b75e8a39bcb4d3fd36b2 100644
+--- a/server/src/services/accountSocial.ts
++++ b/server/src/services/accountSocial.ts
+@@ -50,10 +50,9 @@ const confirmPassword = async (c: Context<typeConfig.Context>, user: userModel.R
+   if (confirmed.id !== user.id) throw denied()
+ }
+ 
+-export const status = async (c: Context<typeConfig.Context>) => {
+-  const user = await actor(c)
++export const readStatus = async (c: Context<typeConfig.Context>, user: userModel.Record) => {
+   const linked = await identity.list(c.env.DB, user.id)
+-  return c.json({
++  return {
+     canManage: !!(user.password && user.emailVerified),
+     providers: (['Google', 'GitHub'] as const).map((name) => ({
+       provider: name, available: available(c, name),
+@@ -61,7 +60,12 @@ export const status = async (c: Context<typeConfig.Context>) => {
+       label: linked.find((entry) => entry.provider === name)?.label ?? null,
+       primary: user.socialAccountType === name,
+     })),
+-  })
++  }
++}
++
++export const status = async (c: Context<typeConfig.Context>) => {
++  const user = await actor(c)
++  return c.json(await readStatus(c, user))
+ }
+ 
+ const callbackUri = (c: Context<typeConfig.Context>, name: identity.Provider) => `${c.env.AUTH_SERVER_URL.replace(/\/$/, '')}${

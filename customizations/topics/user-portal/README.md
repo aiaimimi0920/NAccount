@@ -1,5 +1,12 @@
 # user-portal
 
+NA-14 将首屏资料与白名单社交状态合并为可选的 `GET /account/api/profile?include=social`，
+健康首屏从两次串行 HTTP、2 KV + 6 D1 减为一次 HTTP、1 KV + 4 D1。复用同次已验证 actor，
+不跨请求缓存权限或安全版本；默认资料 DTO 与 PATCH 不变。可选社交查询失败时省略字段，
+客户端退回独立请求和真实错误展示。应用/社交视图离开后取消未完成 GET 并隔离迟到结果，
+不取消或重放认证/发码写操作。151 项聚焦、完整 CF 3,149 项、类型检查与双构建通过；
+新优化未上线，具体业务实测和交付边界见 `docs/USER_CENTER.md`、`docs/IMPLEMENTATION_PLAN.md`。
+
 NA-10 后续补丁接入确认后的 Neuro 用户中心和 Beaver 标识、独立昵称/签名与应用列表、邮箱/联系人手机验证码绑定、密码修改、TOTP、自助注销及用户安全版本撤销。0049/0050 为对应 D1 迁移；新增认证语言协商，显式 locale 优先于浏览器 Accept-Language。发布为 SBA 3.2.0，不包含 provider 凭据配置。安全与验证边界见 `docs/USER_CENTER.md`、`docs/AUTHENTICATION_LOCALE.md`。
 
 NA-09 普通用户入口与个人中心。范围与验收见 `docs/USER_CENTER.md`。
