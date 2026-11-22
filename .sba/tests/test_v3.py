@@ -219,3 +219,52 @@ class LifecycleTests(unittest.TestCase):
         with patch.object(life,'maybe_get',return_value=None), patch.object(life.deploy,'cloud_api',return_value=[{'hostname':urlparse(self.settings['admin']['url']).hostname}]) as api:
             with self.assertRaisesRegex(StackError,'domain already exists'):life.require_unused_workers(self.settings)
             self.assertTrue(all(call.kwargs.get('method','GET')=='GET' for call in api.call_args_list))
+
+    def test_d1_absent_requires_7404_when_http_404_has_body(self):
+        d1_path = '/d1/database/' + self.settings['database']['id']
+        valid_404 = HTTPError('https://api.cloudflare.com', 404, 'Not Found', {},
+                              io.BytesIO(json.dumps({'success': False, 'result': None, 'errors': [{'code': 7404}]}).encode()))
+        html_404 = HTTPError('https://api.cloudflare.com', 404, 'Not Found', {}, io.BytesIO(b'<html>404</html>'))
+        wrong_code_404 = HTTPError('https://api.cloudflare.com', 404, 'Not Found', {},
+                                   io.BytesIO(json.dumps({'success': False, 'result': None, 'errors': [{'code': 10000}]}).encode()))
+        with patch.dict(os.environ, {'CLOUDFLARE_API_TOKEN': 'fixture'}):
+            with patch.object(life.deploy, 'urlopen', side_effect=valid_404):
+                self.assertIsNone(life.maybe_get(self.settings, d1_path))
+            for bad in (html_404, wrong_code_404):
+                with patch.object(life.deploy, 'urlopen', side_effect=bad):
+                    with self.assertRaises(life.deploy.CloudApiError):
+                        life.maybe_get(self.settings, d1_path)
+
+    def test_preview_source_inventory_allows_readonly_email_routing_only_on_source(self):
+        source = copy.deepcopy(self.settings)
+        source['database'] = {'name': 'source-db', 'id': 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'}
+        source['kvId'] = '8' * 32
+        source['server'].update(name='source-auth', url='https://source-auth.example.com')
+        source['admin'].update(name='source-admin', url='https://source-admin.example.com')
+        email_row = {'key': 'target-email', 'kind': 'email-routing', 'accountId': source['accountId'],
+                     'remoteId': 'email-routing:' + 'c' * 32, 'name': 'source-email'}
+        request = copy.deepcopy(self.request)
+        request['action'] = 'preview'
+        request['previous'] = {'sourceSha': 'b' * 40, 'applicationVersion': '2.0.0'}
+        request['context'] = {
+            'resources': request['context']['resources'],
+            'urls': [self.settings['server']['url'], self.settings['admin']['url']],
+            'source': {
+                'instanceId': 'dc-' + '4' * 32, 'taskId': 'dc-' + '4' * 32,
+                'sourceSha': 'b' * 40, 'applicationVersion': '2.0.0', 'environment': 'source',
+                'configuration': source, 'resultDigest': 'b' * 64,
+                'resources': [{'key': k, 'kind': t, 'accountId': a, 'remoteId': i, 'name': k}
+                              for k, t, a, i in sorted(life.inventory(source))] + [email_row],
+            },
+        }
+        life.validate_context(request)
+        bad_preview = copy.deepcopy(request)
+        bad_preview['context']['resources'] = bad_preview['context']['resources'] + [
+            {**email_row, 'accountId': self.settings['accountId']}]
+        with self.assertRaises(StackError):
+            life.validate_context(bad_preview)
+        bad_cleanup = copy.deepcopy(self.request)
+        bad_cleanup['context']['resources'] = bad_cleanup['context']['resources'] + [
+            {**email_row, 'accountId': self.settings['accountId']}]
+        with self.assertRaises(StackError):
+            life.validate_context(bad_cleanup)

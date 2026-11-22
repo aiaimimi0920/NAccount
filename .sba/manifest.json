@@ -2,7 +2,7 @@
   "schemaVersion": 3,
   "id": "naccount-cloudflare",
   "name": "NAccount Cloudflare deployment",
-  "version": "3.3.0",
+  "version": "3.3.1",
   "entrypoint": "springbok.ps1",
   "runtime": { "runner": "windows-2025", "powershell": "5.1", "python": "3.12", "node": "22" },
   "actions": {
@@ -14,9 +14,36 @@
     "repair": { "timeoutSeconds": 3600 }
   },
   "repairs": [
-    { "id": "admin-publish", "name": "仅补发后台", "fromErrorCodes": ["NACCOUNT_ADMIN_PUBLISH_FAILED"], "secretNames": ["CLOUDFLARE_API_TOKEN"] },
-    { "id": "security-migration", "name": "续做安全迁移并发布", "fromErrorCodes": ["NACCOUNT_SERVER_PUBLISH_COMMAND_CF_7500"], "secretNames": ["CLOUDFLARE_API_TOKEN"] },
-    { "id": "readiness-only", "name": "只读核验已发布版本", "fromErrorCodes": ["NACCOUNT_READINESS_FAILED"], "secretNames": ["CLOUDFLARE_API_TOKEN"] }
+    {
+      "id": "admin-publish",
+      "name": "仅补发后台",
+      "fromActions": ["deploy", "update", "repair"],
+      "fromErrorCodes": [
+        "NACCOUNT_ADMIN_PUBLISH_FAILED",
+        "NACCOUNT_ADMIN_PUBLISH_WRANGLER_DEPLOY_EXIT_NONZERO",
+        "NACCOUNT_ADMIN_PUBLISH_WRANGLER_DEPLOY_NETWORK",
+        "NACCOUNT_ADMIN_PUBLISH_WRANGLER_DEPLOY_SPAWN_FAILED",
+        "NACCOUNT_ADMIN_PUBLISH_WRANGLER_DEPLOY_CF_10000",
+        "NACCOUNT_ADMIN_PUBLISH_WRANGLER_DEPLOY_CF_10013",
+        "NACCOUNT_ADMIN_PUBLISH_WRANGLER_DEPLOY_CF_10021",
+        "NACCOUNT_ADMIN_PUBLISH_WRANGLER_SECRET_EXIT_NONZERO"
+      ],
+      "secretNames": ["CLOUDFLARE_API_TOKEN"]
+    },
+    {
+      "id": "security-migration",
+      "name": "续做安全迁移并发布",
+      "fromActions": ["deploy", "update"],
+      "fromErrorCodes": ["NACCOUNT_SERVER_PUBLISH_COMMAND_CF_7500"],
+      "secretNames": ["CLOUDFLARE_API_TOKEN"]
+    },
+    {
+      "id": "readiness-only",
+      "name": "只读核验已发布版本",
+      "fromActions": ["deploy", "update", "repair"],
+      "fromErrorCodes": ["NACCOUNT_READINESS_FAILED"],
+      "secretNames": ["CLOUDFLARE_API_TOKEN"]
+    }
   ],
   "secrets": ["CLOUDFLARE_API_TOKEN", "ADMIN_BOOTSTRAP_PASSWORD"]
 }

@@ -243,6 +243,75 @@ class DeploymentTests(unittest.TestCase):
             keys.assert_not_called()
             cli.assert_not_called()
 
+    def test_cloud_api_delete_accepts_empty_2xx_and_rejects_empty_get(self):
+        class EmptyResponse(io.BytesIO):
+            def __init__(self, status=204, body=b""):
+                super().__init__(body)
+                self.status = status
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                return False
+
+        with patch.dict(os.environ, {"CLOUDFLARE_API_TOKEN": "test-token"}):
+            with patch.object(deploy, "urlopen", return_value=EmptyResponse(204, b"")):
+                self.assertIsNone(deploy.cloud_api(self.settings, "/workers/domains/abc", method="DELETE"))
+            with patch.object(deploy, "urlopen", return_value=EmptyResponse(200, b"  ")):
+                self.assertIsNone(deploy.cloud_api(self.settings, "/workers/scripts/test-auth", method="DELETE"))
+            with patch.object(deploy, "urlopen", return_value=EmptyResponse(200, b"")):
+                with self.assertRaisesRegex(deploy.CloudApiError, "invalid JSON"):
+                    deploy.cloud_api(self.settings, "/workers/domains", method="GET")
+
+    def test_cloud_api_bounded_pagination_and_overflow_rejection(self):
+        def make_response(payload):
+            stream = io.BytesIO(json.dumps(payload).encode("utf-8"))
+            stream.status = 200
+            return stream
+
+        urls = []
+        pages = [
+            {"success": True, "result": [{"id": "d1"}, {"id": "d2"}],
+             "result_info": {"page": 1, "total_pages": 2, "total_count": 3}},
+            {"success": True, "result": [{"id": "d3"}],
+             "result_info": {"page": 2, "total_pages": 2, "total_count": 3}},
+        ]
+        def fake_open(req, timeout=30):
+            urls.append(req.full_url)
+            return make_response(pages[len(urls) - 1])
+
+        with patch.dict(os.environ, {"CLOUDFLARE_API_TOKEN": "test-token"}):
+            with patch.object(deploy, "urlopen", side_effect=fake_open):
+                rows = deploy.cloud_api(self.settings, "/workers/domains")
+            self.assertEqual(rows, [{"id": "d1"}, {"id": "d2"}, {"id": "d3"}])
+            self.assertTrue(urls[0].endswith("/workers/domains"))
+            self.assertTrue(urls[1].endswith("/workers/domains?page=2"))
+
+            for bad_info in (
+                {"page": 1, "total_pages": 21, "total_count": 21},
+                {"page": 1, "total_pages": 2, "total_count": 1001},
+                {"count": 1000, "cursor": "opaque-next"},
+                {"page": 1, "total_pages": 1, "total_count": 5},
+            ):
+                with patch.object(deploy, "urlopen", return_value=make_response({"success": True, "result": [{"id": "x"}], "result_info": bad_info})):
+                    with self.assertRaises(deploy.CloudApiError):
+                        deploy.cloud_api(self.settings, "/workers/domains")
+
+            with patch.object(deploy, "urlopen", return_value=make_response({"success": True, "result": [{"name": "k"}], "result_info": {"count": 1, "cursor": "opaque-next"}})):
+                self.assertEqual(deploy.cloud_api(self.settings, "/storage/kv/namespaces/abc/keys?limit=1"), [{"name": "k"}])
+
+    def test_cloud_api_extracts_numeric_error_code_and_suppresses_body(self):
+        from urllib.error import HTTPError
+        body = io.BytesIO(json.dumps({"success": False, "result": None, "errors": [{"code": 7404, "message": "private-secret"}]}).encode("utf-8"))
+        failure = HTTPError("https://api.cloudflare.com/client/v4/test", 404, "Not Found", {}, body)
+        with patch.dict(os.environ, {"CLOUDFLARE_API_TOKEN": "test-token"}), \
+                patch.object(deploy, "urlopen", side_effect=failure):
+            with self.assertRaises(deploy.CloudApiError) as ctx:
+                deploy.cloud_api(self.settings, "/d1/database/test")
+        self.assertEqual(ctx.exception.provider_status, 404)
+        self.assertEqual(ctx.exception.provider_code, 7404)
+        self.assertTrue(ctx.exception.d1_not_found)
+        self.assertNotIn("private-secret", str(ctx.exception))
+
 
 if __name__ == "__main__":
     unittest.main()

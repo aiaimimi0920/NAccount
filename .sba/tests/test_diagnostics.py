@@ -11,7 +11,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import cloudflare as deploy
 import springbok as sba
-from diagnostics import command_failure, DeploymentCommandError, result_error
+from diagnostics import command_failure, DeploymentCommandError, result_diagnostics, result_error
 from stack import scratch, write_json, read_json
 
 
@@ -76,9 +76,42 @@ class DiagnosticsTests(unittest.TestCase):
         self.assertEqual(result['status'], 'unknown')
         self.assertEqual(result['checks'], [])
         self.assertEqual(result['errorCode'], 'NACCOUNT_ADMIN_PUBLISH_WRANGLER_DEPLOY_CF_10021')
+        self.assertNotIn('diagnostics', result)
         for key, value in request.items():
             self.assertEqual(result[key], value)
         self.assertNotIn('private-', str(result) + logs.getvalue())
+
+    def test_structured_diagnostics_excludes_secrets_and_is_opt_in(self):
+        from urllib.error import HTTPError
+        cmd_err = command_failure(self.command, b'private-stdout', b'[code: 10021] private-stderr')
+        self.assertEqual(result_diagnostics('admin-publish', cmd_err, 420),
+                         {'failedStep': 'admin-publish', 'providerCode': 10021, 'durationMs': 420})
+        net_err = command_failure(self.command, b'', b'private fetch failed')
+        self.assertEqual(result_diagnostics('server-publish', net_err, 50),
+                         {'failedStep': 'server-publish', 'providerCode': 'WRANGLER_DEPLOY_NETWORK', 'durationMs': 50})
+        api_err = deploy.CloudApiError('suppressed', provider_status=403, provider_code=10000)
+        self.assertEqual(result_diagnostics('readiness', api_err, 15),
+                         {'failedStep': 'readiness', 'providerStatus': 403, 'providerCode': 10000, 'durationMs': 15})
+        http_err = HTTPError('https://auth.example.com', 502, 'private-gateway', {}, None)
+        self.assertEqual(result_diagnostics('readiness', http_err, 99),
+                         {'failedStep': 'readiness', 'providerStatus': 502, 'durationMs': 99})
+
+        temp = scratch('naccount-diagnostic-optin-')
+        request = {'schemaVersion': 3, 'taskId': 'diagnostic-optin', 'action': 'deploy',
+                   'sourceSha': 'a' * 40, 'applicationVersion': '3.3.1'}
+        write_json(temp / 'request.json', request)
+        def execute(_request, *, on_stage):
+            on_stage('admin-publish', True)
+            raise cmd_err
+        with patch.object(sys, 'argv', ['springbok.py', '--request', str(temp / 'request.json'), '--result', str(temp / 'result.json')]), \
+                patch.dict(os.environ, {'SBA_EXECUTE': '1', 'NACCOUNT_SBA_DIAGNOSTICS': '1'}), \
+                patch.object(sba, 'execute', side_effect=execute), redirect_stderr(io.StringIO()):
+            self.assertEqual(sba.main(), 1)
+        result = read_json(temp / 'result.json')
+        self.assertEqual(result['diagnostics']['failedStep'], 'admin-publish')
+        self.assertEqual(result['diagnostics']['providerCode'], 10021)
+        self.assertGreaterEqual(result['diagnostics']['durationMs'], 0)
+        self.assertNotIn('private-', str(result))
 
     def test_untyped_exception_is_not_serialized(self):
         self.assertEqual(result_error('NACCOUNT_ADMIN_PUBLISH_FAILED', ValueError('private')),

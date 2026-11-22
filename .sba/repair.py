@@ -22,14 +22,27 @@ def digest(value):
     return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(',', ':'), ensure_ascii=False).encode()).hexdigest()
 
 
+ADMIN_PUBLISH_ERRORS = frozenset({
+    'NACCOUNT_ADMIN_PUBLISH_FAILED',
+    'NACCOUNT_ADMIN_PUBLISH_WRANGLER_DEPLOY_EXIT_NONZERO',
+    'NACCOUNT_ADMIN_PUBLISH_WRANGLER_DEPLOY_NETWORK',
+    'NACCOUNT_ADMIN_PUBLISH_WRANGLER_DEPLOY_SPAWN_FAILED',
+    'NACCOUNT_ADMIN_PUBLISH_WRANGLER_DEPLOY_CF_10000',
+    'NACCOUNT_ADMIN_PUBLISH_WRANGLER_DEPLOY_CF_10013',
+    'NACCOUNT_ADMIN_PUBLISH_WRANGLER_DEPLOY_CF_10021',
+    'NACCOUNT_ADMIN_PUBLISH_WRANGLER_SECRET_EXIT_NONZERO',
+})
+
+
 def validate_context(request):
     context = request.get('context')
     require(isinstance(context, dict) and set(context) == {
         'repairId', 'parentTaskId', 'parentRunId', 'requestDigest', 'resultDigest', 'errorCode'})
-    require((context['repairId'], context['errorCode']) in {
-        ('admin-publish', 'NACCOUNT_ADMIN_PUBLISH_FAILED'),
+    allowed = {('admin-publish', code) for code in ADMIN_PUBLISH_ERRORS} | {
         ('security-migration', 'NACCOUNT_SERVER_PUBLISH_COMMAND_CF_7500'),
-        ('readiness-only', 'NACCOUNT_READINESS_FAILED')})
+        ('readiness-only', 'NACCOUNT_READINESS_FAILED'),
+    }
+    require((context['repairId'], context['errorCode']) in allowed)
     if context['repairId'] == 'security-migration':
         require(request.get('previous') == {
             'applicationVersion': '3.2.0', 'sourceSha': 'a8621252ab167e70f4abae6896cc7458faf17235'})

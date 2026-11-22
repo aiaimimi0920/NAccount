@@ -8,13 +8,14 @@ import os
 from pathlib import Path
 import re
 import sys
+import time
 from urllib.request import Request, urlopen
 
 import cloudflare as deploy
 import lifecycle
 import admin_bootstrap
 import repair
-from diagnostics import result_error
+from diagnostics import result_diagnostics, result_error
 from stack import ROOT, Stack, StackError, atomic_json, clean, git, read_json, scratch, write_json
 
 ERROR_CODES = {stage: f'NACCOUNT_{stage.upper().replace("-", "_")}_FAILED' for stage in (
@@ -255,10 +256,13 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--request', type=Path, required=True)
     parser.add_argument('--result', type=Path, required=True)
+    parser.add_argument('--diagnostics', action='store_true',
+                        default=os.environ.get('NACCOUNT_SBA_DIAGNOSTICS') == '1')
     args = parser.parse_args()
     request = read_json(args.request)
     result = {key: request.get(key) for key in ('schemaVersion', 'taskId', 'action', 'sourceSha', 'applicationVersion')}
     progress = {'stage': 'unconfirmed', 'writes': None}
+    started = time.monotonic()
     def on_stage(stage, writes):
         if stage not in ERROR_CODES or not isinstance(writes, bool) or (progress['writes'] is True and not writes):
             raise StackError('Invalid execution progress')
@@ -275,6 +279,10 @@ def main() -> int:
         result.update(status='unknown' if possible_writes and os.environ.get('SBA_EXECUTE') == '1' and request.get('action') in ('deploy', 'update', 'preview', 'destroy-preview', 'repair') else 'failed',
                       checks=[] if possible_writes else [{'id': 'cloud-writes-not-started', 'passed': True}],
                       errorCode=result_error(ERROR_CODES.get(progress['stage'], 'NACCOUNT_EXECUTION_FAILED'), error))
+        if args.diagnostics:
+            diag = result_diagnostics(progress['stage'], error, int((time.monotonic() - started) * 1000))
+            if diag:
+                result['diagnostics'] = diag
         print('NACCOUNT_EXECUTION_FAILED; preserve the runner diagnostics and do not replay cloud writes', file=sys.stderr)
         code = 1
     atomic_json(args.result, result)

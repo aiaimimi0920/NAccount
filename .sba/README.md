@@ -1,5 +1,12 @@
 # Cloudflare 部署与更新
 
+## 3.3.1：SpringBok 新版（OPT-01～OPT-08 / `d591242`）契约对齐
+
+- **Cloudflare API 删除空正文与有界分页（对齐 `OPT-04` 与删除核对）**：`cloudflare.py` 的 `cloud_api()` 兼容 Worker/自定义域名 `DELETE` 返回 HTTP `200`/`204` 空正文（以随后的独立读回确认删除），并为无显式 `page=`/`limit=` 的 `GET` 列表响应提供基于 `result_info` 的有界自动分页（最多 20 页 / 1,000 条，页数超限、计数漂移或游标截断一律失败关闭）；新增 `CloudApiError` 在抑制原始响应正文的前提下提取单一数字错误码与 HTTP 状态码。
+- **D1 `7404` 缺失判定与源清单只读邮件路由兼容**：`lifecycle.py` 在 `GET /d1/database/{id}` 返回带正文的 HTTP `404` 时要求 Cloudflare 标准 `7404` 错误信封，避免代理或路径错误假阳性判定数据库已删除；`preview` 的 `context.source.resources` 允许携带平台只读 `email-routing` 清单项，可写 `context.resources` 与 `destroy-preview` 仍严格禁止。
+- **修复路由精确错误码与 `fromActions` 显式声明**：SpringBok 按精确字符串匹配 `manifest.repairs[].fromErrorCodes`，`3.3.1` 为三项修复显式补齐 `fromActions`，并将 `admin-publish` 的可触发错误码扩展至后台发布阶段实际产出的 Wrangler 诊断码（`NACCOUNT_ADMIN_PUBLISH_WRANGLER_DEPLOY_*` 及 `WRANGLER_SECRET_EXIT_NONZERO`）；`security-migration` 与 `readiness-only` 的固定历史版本/SHA 边界保持不变。
+- **结构化脱敏诊断与执行器兼容门控（对齐 `OPT-05`）**：`diagnostics.py` 与 `springbok.py` 实现无凭据结构化 `diagnostics`（`failedStep`、`providerStatus`、`providerCode`、`durationMs`）。因 SpringBok 当前已打标执行器 `sba-executor-de26192f` 的 `validateResult` 尚未合入 `OPT-05` 可选字段白名单，默认回执暂不附带 `diagnostics`（可通过 `--diagnostics` 或 `NACCOUNT_SBA_DIAGNOSTICS=1` 开启），待 SpringBok 部署并切换至 `>= d591242` 的 `sba-executor-*` 标签后可直接默认开启。`.sba/deployment.json` 与 `manifest.runtime` 保持不变，确保既有实例 `update`/`repair` 的 `canonicalSba` 声明一致性。
+
 ## 3.3.0：全栈安全、边缘性能与多端双语升级（NA-17）
 
 - **边缘计算放置与可观测性**：非 preview 部署配置为认证与后台 Worker 开启 Cloudflare Smart Placement（`placement.mode = "smart"`）及脱敏 Workers Observability（`observability.enabled = true`）；`_sbaPreview` 自动剥离两项配置，保持隔离副本最小副作用。
@@ -216,4 +223,4 @@ SBA 的失败回执沿用 `errorCode`，部署子进程可进一步返回固定�
 
 程序先读取 `manifest.json`，选定动作与参数，从非 UNC 的本地或持久映射盘工作目录启动 `powershell.exe -NoProfile -NonInteractive -File <绝对路径到 .sba/deploy.ps1> <动作> ... --json`。`--config` 的相对路径以调用者工作目录为基准；建议程序传绝对路径。Python 3.11+、Git、Node.js 和 npm 按动作准备，不能把 `plan` 的离线结果当作构建或云端验收。
 
-参数语法正确且包含 `--json` 时，stdout 只输出一个 UTF-8 JSON 对象：`schemaVersion=1`、`ok`、`action`，成功时有 `result`，动作执行失败时有 `error.message`；同时检查进程退出码（成功为 0）。参数解析失败可能只有 stderr 和非零退出码。构建与发布的进度日志写到 stderr，不能把 stderr 文本当稳定协议。`plan` 返回 `cloudWrites=false`；`prepare`/`build` 返回 release 和回执路径；`publish` 返回 `deployed-unverified` 与日志目录，仍需业务验收。`bootstrap-keys`/`publish` 的 `--execute` 是防误触门槛，不代替单独授权。现阶段 SpringBok 尚无已确认的 `.sba` 对接协议，本目录仅提供可供其调用的入口，不宣称已完成集成。
+参数语法正确且包含 `--json` 时，stdout 只输出一个 UTF-8 JSON 对象：`schemaVersion=1`、`ok`、`action`，成功时有 `result`，动作执行失败时有 `error.message`；同时检查进程退出码（成功为 0）。参数解析失败可能只有 stderr 和非零退出码。构建与发布的进度日志写到 stderr，不能把 stderr 文本当稳定协议。`plan` 返回 `cloudWrites=false`；`prepare`/`build` 返回 release 和回执路径；`publish` 返回 `deployed-unverified` 与日志目录，仍需业务验收。`bootstrap-keys`/`publish` 的 `--execute` 是防误触门槛，不代替单独授权。以上 stdout 协议仅适用于人工/工具直接调用 `deploy.ps1`；SpringBok 平台正式接入统一调用 `springbok.ps1 -RequestPath ... -ResultPath ...` 并消费 SBA v3 文件回执，详见 [联合接入](SPRINGBOK.md)。

@@ -30,10 +30,23 @@ def inventory(settings):
     return {(key, kind, account, remote) for key, kind, remote in values}
 
 
-def check_inventory(rows, settings):
-    require(isinstance(rows, list) and len(rows) == 6)
+def check_inventory(rows, settings, *, allow_source_email: bool = False):
+    require(isinstance(rows, list))
     require(all(isinstance(row, dict) and set(row) == {'key', 'kind', 'accountId', 'remoteId', 'name'} for row in rows))
-    require({(r['key'], r['kind'], r['accountId'], r['remoteId']) for r in rows} == inventory(settings))
+    if allow_source_email:
+        email_rows = [r for r in rows if r['kind'] == 'email-routing']
+        base_rows = [r for r in rows if r['kind'] != 'email-routing']
+        require(len(rows) <= 20 and len({r['key'] for r in rows}) == len(rows)
+                and len({(r['accountId'], r['kind'], r['remoteId']) for r in rows}) == len(rows))
+        require(all(r['accountId'] == settings['accountId'] and isinstance(r['key'], str)
+                    and re.fullmatch(r'[A-Za-z][A-Za-z0-9_-]{0,79}', r['key'])
+                    and isinstance(r['name'], str) and 0 < len(r['name']) <= 256
+                    and isinstance(r['remoteId'], str) and re.fullmatch(r'email-routing:[a-f0-9]{32}', r['remoteId'])
+                    for r in email_rows))
+    else:
+        base_rows = rows
+    require(len(base_rows) == 6)
+    require({(r['key'], r['kind'], r['accountId'], r['remoteId']) for r in base_rows} == inventory(settings))
 
 
 def validate_context(request):
@@ -53,7 +66,7 @@ def validate_context(request):
         require(source['environment'] != request['environment'])
         require(all(re.fullmatch(r'dc-[a-f0-9]{32}', source[key]) for key in ('instanceId', 'taskId')))
         require(re.fullmatch(r'[a-f0-9]{64}', source['resultDigest']))
-        check_inventory(source['resources'], source['configuration'])
+        check_inventory(source['resources'], source['configuration'], allow_source_email=True)
         require(source['configuration']['accountId'] == settings['accountId'])
         old = {(r['kind'], r['remoteId']) for r in source['resources']}
         require(not old.intersection((r['kind'], r['remoteId']) for r in context['resources']))
@@ -256,6 +269,8 @@ def maybe_get(settings, path):
         return deploy.cloud_api(settings, path)
     except StackError as error:
         if isinstance(error.__cause__, HTTPError) and error.__cause__.code == 404:
+            if path.startswith('/d1/database/') and isinstance(error, deploy.CloudApiError) and error.has_body and not error.d1_not_found:
+                raise
             return None
         raise
 

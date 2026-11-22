@@ -26,9 +26,20 @@ class RepairTests(unittest.TestCase):
 
     def test_context_is_exact_and_bound_to_original_error(self):
         repair.validate_context(self.request)
+        manifest = sba.read_json(sba.ROOT / '.sba/manifest.json')
+        declared = {row['id']: row for row in manifest['repairs']}
+        self.assertEqual(set(declared['admin-publish']['fromErrorCodes']), repair.ADMIN_PUBLISH_ERRORS)
+        self.assertEqual(declared['admin-publish']['fromActions'], ['deploy', 'update', 'repair'])
+        self.assertEqual(declared['security-migration']['fromActions'], ['deploy', 'update'])
+        self.assertEqual(declared['readiness-only']['fromActions'], ['deploy', 'update', 'repair'])
+        for code in repair.ADMIN_PUBLISH_ERRORS:
+            candidate = copy.deepcopy(self.request)
+            candidate['context']['errorCode'] = code
+            repair.validate_context(candidate)
         for key, value in [('repairId', 'deploy'), ('parentRunId', True), ('parentRunId', 0),
                            ('parentTaskId', self.request['taskId']), ('requestDigest', 'secret'),
-                           ('errorCode', 'OTHER_FAILED'), ('extra', 'unexpected')]:
+                           ('errorCode', 'OTHER_FAILED'), ('errorCode', 'NACCOUNT_SERVER_PUBLISH_FAILED'),
+                           ('extra', 'unexpected')]:
             request = copy.deepcopy(self.request); request['context'][key] = value
             with self.subTest(key=key, value=value), self.assertRaises(StackError):
                 repair.validate_context(request)

@@ -1,5 +1,6 @@
 """仅公开固定命令/错误类别；不序列化子进程输出、参数或异常原文。"""
 import re
+from urllib.error import HTTPError
 from stack import StackError
 
 
@@ -10,7 +11,10 @@ class DeploymentCommandError(StackError):
             operation = 'COMMAND'
         if not re.fullmatch(r'(?:EXIT_NONZERO|NETWORK|SPAWN_FAILED|CF_[1-9][0-9]{3,5})', reason):
             reason = 'EXIT_NONZERO'
+        self.operation = operation
+        self.reason = reason
         self.code = operation + '_' + reason
+        self.provider_code = int(reason[3:]) if reason.startswith('CF_') else self.code
         super().__init__(self.code)
 
 
@@ -43,3 +47,23 @@ def result_error(stage_code, error):
         if re.fullmatch(r'[A-Z][A-Z0-9_]{1,79}', value):
             return value
     return stage_code
+
+
+def result_diagnostics(stage, error, duration_ms=None):
+    diagnostics = {}
+    if isinstance(stage, str) and re.fullmatch(r'[a-z][a-z0-9-]{1,62}', stage):
+        diagnostics['failedStep'] = stage
+    status = getattr(error, 'provider_status', None)
+    if status is None and isinstance(error, HTTPError):
+        status = error.code
+    if status is None and isinstance(getattr(error, '__cause__', None), HTTPError):
+        status = error.__cause__.code
+    if type(status) is int and 100 <= status <= 599:
+        diagnostics['providerStatus'] = status
+    code = getattr(error, 'provider_code', None)
+    if (type(code) is int and 0 <= code <= 999999999) or (
+            isinstance(code, str) and re.fullmatch(r'[A-Z][A-Z0-9_]{1,63}', code)):
+        diagnostics['providerCode'] = code
+    if type(duration_ms) is int:
+        diagnostics['durationMs'] = min(max(0, duration_ms), 3600000)
+    return diagnostics

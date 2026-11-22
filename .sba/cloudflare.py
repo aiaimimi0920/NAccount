@@ -277,21 +277,113 @@ def checked_release(release: Path) -> tuple[dict, dict]:
     return settings, receipt
 
 
-def cloud_api(settings: dict, suffix: str, *, method: str = "GET", payload=None):
-    token = os.environ.get("CLOUDFLARE_API_TOKEN")
-    if not token:
-        raise StackError("CLOUDFLARE_API_TOKEN is required")
-    url = "https://api.cloudflare.com/client/v4/accounts/" + settings["accountId"] + suffix
+class CloudApiError(StackError):
+    def __init__(self, message: str, *, provider_status: int | None = None,
+                 provider_code: int | None = None, has_body: bool = False, d1_not_found: bool = False):
+        super().__init__(message)
+        self.provider_status = provider_status if type(provider_status) is int and 100 <= provider_status <= 599 else None
+        self.provider_code = provider_code if type(provider_code) is int and 0 <= provider_code <= 999999999 else None
+        self.has_body = has_body
+        self.d1_not_found = d1_not_found
+
+
+def _parse_cloudflare_error(raw: bytes) -> tuple[int | None, bool]:
+    try:
+        payload = json.loads(raw[:65536].decode("utf-8"))
+    except (UnicodeDecodeError, ValueError):
+        return None, False
+    if not isinstance(payload, dict):
+        return None, False
+    errors = payload.get("errors")
+    if not isinstance(errors, list) or len(errors) != 1 or not isinstance(errors[0], dict):
+        return None, False
+    code = errors[0].get("code")
+    if type(code) is not int or not (0 <= code <= 999999999):
+        return None, False
+    d1_not_found = payload.get("success") is False and payload.get("result") is None and code == 7404
+    return code, d1_not_found
+
+
+def _cloud_api_page(account_id: str, token: str, suffix: str, *, method: str, payload):
+    url = "https://api.cloudflare.com/client/v4/accounts/" + account_id + suffix
     request = Request(url, method=method, headers={"Authorization": "Bearer " + token, "Content-Type": "application/json"},
                       data=None if payload is None else encode_json(payload))
     try:
         with urlopen(request, timeout=30) as response:
-            result = json.load(response)
+            status = getattr(response, "status", 200)
+            raw = response.read(16 * 1024 * 1024 + 1)
     except HTTPError as exc:
-        raise StackError(f"Cloudflare API failed with HTTP {exc.code}; response body suppressed") from exc
-    if not result.get("success"):
-        raise StackError("Cloudflare API operation failed; response body suppressed")
-    return result["result"]
+        has_body = exc.fp is not None
+        raw_error = b""
+        if has_body:
+            try:
+                raw_error = exc.read(65537)
+            except Exception:
+                raw_error = b""
+        code, d1_not_found = _parse_cloudflare_error(raw_error) if raw_error else (None, False)
+        raise CloudApiError(f"Cloudflare API failed with HTTP {exc.code}; response body suppressed",
+                            provider_status=exc.code, provider_code=code,
+                            has_body=has_body, d1_not_found=d1_not_found) from exc
+    if len(raw) > 16 * 1024 * 1024:
+        raise CloudApiError("Cloudflare API response exceeds bounded size; response body suppressed", provider_status=status)
+    if method == "DELETE" and not raw.strip():
+        if not (type(status) is int and 200 <= status < 300):
+            raise CloudApiError(f"Cloudflare API failed with HTTP {status}; response body suppressed", provider_status=status)
+        return None, status
+    try:
+        result = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError):
+        raise CloudApiError("Cloudflare API returned invalid JSON; response body suppressed", provider_status=status) from None
+    if not isinstance(result, dict) or result.get("success") is not True or "result" not in result:
+        code, _ = _parse_cloudflare_error(raw)
+        raise CloudApiError("Cloudflare API operation failed; response body suppressed",
+                            provider_status=status, provider_code=code)
+    return result, status
+
+
+def cloud_api(settings: dict, suffix: str, *, method: str = "GET", payload=None):
+    token = os.environ.get("CLOUDFLARE_API_TOKEN")
+    if not token:
+        raise StackError("CLOUDFLARE_API_TOKEN is required")
+    result, status = _cloud_api_page(settings["accountId"], token, suffix, method=method, payload=payload)
+    if result is None:
+        return None
+    items = result["result"]
+    info = result.get("result_info")
+    if method == "GET" and isinstance(items, list) and isinstance(info, dict) and "page=" not in suffix and "limit=" not in suffix:
+        if isinstance(info.get("cursor"), str) and info["cursor"]:
+            raise CloudApiError("Cloudflare API list response truncated; cursor pagination exceeded", provider_status=status)
+        if "total_pages" in info:
+            pages = info["total_pages"]
+            total_count = info.get("total_count", len(items))
+            if pages == 0:
+                if total_count != 0 or items:
+                    raise CloudApiError("Cloudflare API pagination metadata inconsistent", provider_status=status)
+                return []
+            if (type(pages) is not int or not (1 <= pages <= 20)
+                    or type(total_count) is not int or not (0 <= total_count <= 1000)
+                    or info.get("page", 1) != 1):
+                raise CloudApiError("Cloudflare API pagination exceeds bounded limit", provider_status=status)
+            rows = list(items)
+            sep = "&" if "?" in suffix else "?"
+            for page in range(2, pages + 1):
+                if not items or len(rows) >= total_count:
+                    raise CloudApiError("Cloudflare API pagination metadata inconsistent", provider_status=status)
+                next_result, next_status = _cloud_api_page(settings["accountId"], token, f"{suffix}{sep}page={page}",
+                                                           method="GET", payload=None)
+                items = next_result["result"]
+                next_info = next_result.get("result_info")
+                if (not isinstance(items, list) or not isinstance(next_info, dict)
+                        or next_info.get("page", page) != page or next_info.get("total_pages") != pages
+                        or next_info.get("total_count", total_count) != total_count):
+                    raise CloudApiError("Cloudflare API pagination metadata inconsistent", provider_status=next_status)
+                rows.extend(items)
+                if len(rows) > total_count:
+                    raise CloudApiError("Cloudflare API pagination exceeds declared count", provider_status=next_status)
+            if len(rows) != total_count:
+                raise CloudApiError("Cloudflare API pagination incomplete", provider_status=status)
+            return rows
+    return items
 
 
 def d1_query(settings: dict, sql: str, params: list | None = None, *, error: str = "D1 query failed") -> list:

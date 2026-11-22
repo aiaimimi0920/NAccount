@@ -1,5 +1,18 @@
 # SpringBok 联合部署接入
 
+## NACCOUNT-SBA-V3-S02：SpringBok OPT-01～OPT-08（`d591242`）契约对齐（2026-11-22）
+
+对照新版 SpringBok `main`（`d591242a9046e1583c29bce82b521acd3d83bea1`，含 `OPT-01`～`OPT-08` 及 `OPT-AUDIT-01`）完成 NAccount `.sba/` 全量复核与 `3.3.1` 适配：
+
+1. **保持不变的平台刚性不变式**：
+   - `.sba/deployment.json` 与 `manifest.runtime` 保持零改动：`SpringBok/cloud/service-repair.mjs` 要求 `canonicalSba(application.declaration)` 与原实例完全一致，`service-instance.mjs` 要求同实例 `update` 的 `runtime`、公开配置结构、`resources` 与 `targets` 不变；NAccount 使用 Cloudflare 原生邮件绑定（`secretNames: []`），不声明强制非空的 `applicationSecrets`。
+   - 执行器版本兼容门控：SpringBok 当前最新执行器标签仍为 `sba-executor-de26192f0be5c1f4df23e82e3ac3104ab59bcf30`（其 `validateResult` 使用严格字段白名单，尚未放行 `OPT-05` 的 `diagnostics` 与 `checks[].durationMs`）。因此 `springbok.py` 默认输出同时兼容 `sba-executor-de26192f` 与 `d591242`；结构化 `diagnostics` 通过 `--diagnostics` 或 `NACCOUNT_SBA_DIAGNOSTICS=1` 按需启用，待 SpringBok 发布并切换新 `sba-executor-<sha>` 标签后可改为默认输出。
+2. **本次完成的 `.sba/` 调整**：
+   - `cloudflare.py`：支持 `DELETE` 2xx 空正文返回、无显式分页参数 `GET` 列表的 `result_info` 有界自动分页（上限 20 页 / 1,000 条，超限或不一致失败关闭）及 `CloudApiError` 脱敏状态码/数字错误码提取。
+   - `lifecycle.py`：`GET /d1/database/{id}` 在带正文 HTTP `404` 下核验 Cloudflare `7404` 错误码后才判定数据库不存在；`preview` 源实例清单兼容只读 `email-routing` 项，副本及清理清单继续拒绝。
+   - `manifest.json`（`3.3.1`）与 `repair.py`：补齐三项修复的 `fromActions`，并将 `admin-publish` 的 `fromErrorCodes` 扩展覆盖 `WRANGLER_DEPLOY_*` 与 `WRANGLER_SECRET_EXIT_NONZERO` 精确诊断码，确保后台发布阶段 Wrangler 失败可在 SpringBok 控制面正常匹配“仅补发后台”修复。
+   - `diagnostics.py` 与 `springbok.py`：新增 `result_diagnostics()`，按 `OPT-05` 规范生成不含任何原始日志或秘密的 `failedStep`、`providerStatus`、`providerCode` 与 `durationMs`。
+
 ## NACCOUNT-SBA-V3-S01：自动资源与预升级生命周期（实现与本地验证完成）
 
 2026-10-08，负责人主 AI，基线 `06fdb8b99e5941a6b899bdc76991beedefc5087a`，
