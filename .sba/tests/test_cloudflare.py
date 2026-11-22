@@ -62,6 +62,10 @@ class DeploymentTests(unittest.TestCase):
         self.assertEqual(generated["d1_databases"][0]["binding"], "DB")
         self.assertEqual(generated["kv_namespaces"][0]["id"], "2" * 32)
         self.assertFalse(generated["workers_dev"])
+        self.assertEqual(generated["placement"], {"mode": "smart"})
+        self.assertEqual(generated["observability"], {"enabled": True})
+        self.settings["vars"]["SUPPORTED_LOCALES"] = ["en", "zh", "es"]
+        self.assertEqual(deploy.admin_env(self.settings)["NEXT_PUBLIC_SUPPORTED_LOCALES"], "en,zh")
 
     def test_unbuilt_release_refused(self):
         write_json(self.temp / "release.json", {"state": "prepared"})

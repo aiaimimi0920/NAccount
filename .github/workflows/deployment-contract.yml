@@ -8,7 +8,7 @@ permissions:
 jobs:
   windows:
     runs-on: windows-2025
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
@@ -19,12 +19,66 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: '22'
-      - name: Test application-owned deployment without cloud credentials or writes
+      - name: Test application-owned deployment and catalog lock without cloud writes
         shell: powershell
         env:
           PYTHONUTF8: '1'
           PYTHONDONTWRITEBYTECODE: '1'
         run: |
-          $env:NACCOUNT_TEMP = $env:RUNNER_TEMP
+          git config --global core.longpaths true
+          $env:NACCOUNT_TEMP = Join-Path $env:RUNNER_TEMP 'na-ci'
+          git diff --check
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          .\naccount.ps1 verify --catalog-only
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python -m unittest discover -s tests -v
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+  melody-auth:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22'
+      - name: Initialize locked upstream baseline and restore patch stack
+        env:
+          PYTHONUTF8: '1'
+          PYTHONDONTWRITEBYTECODE: '1'
+        run: |
+          python scripts/stack.py init
+          python scripts/stack.py verify
+      - name: Cache npm packages
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/.npm
+          key: ${{ runner.os }}-node22-${{ hashFiles('melody-auth/server/package-lock.json', 'melody-auth/admin-panel/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-node22-
+      - name: Typecheck, test, and build auth server
+        working-directory: melody-auth/server
+        run: |
+          npm ci --no-audit --no-fund
+          npm run type:check
+          npm run node:secret:generate
+          npm run node:saml:secret:generate
+          npm run test:check:cf
+          npm run node:secret:generate
+          npm run test:check:cf-key-rotate
+          npm run build
+          npx wrangler deploy --dry-run
+      - name: Typecheck, test, and build admin panel
+        working-directory: melody-auth/admin-panel
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          cp .env.example .env
+          npm run type:check
+          npm run test:check
+          npm run cf:build
+          npx wrangler deploy --dry-run

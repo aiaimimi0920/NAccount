@@ -57,6 +57,31 @@ class LifecycleTests(unittest.TestCase):
                 with self.assertRaisesRegex(StackError, 'changed or lost'): life.prove_rows(self.settings, witness)
         finally: db.close()
 
+    def test_keyset_pagination_and_transient_tables_do_not_break_preservation(self):
+        path = self.directory / 'large.sql'
+        inserts = ','.join(f"({i},'user{i}@example.invalid')" for i in range(1, 1105))
+        path.write_text(
+            f"CREATE TABLE user(id INTEGER PRIMARY KEY,email TEXT);INSERT INTO user VALUES {inserts};"
+            "CREATE TABLE naccount_security_limit(bucket TEXT PRIMARY KEY,count INTEGER,expiresAt INTEGER);"
+            "INSERT INTO naccount_security_limit VALUES('ip:1',2,1000);",
+            encoding='utf-8')
+        witness = life.snapshot_witness(path)
+        self.assertNotIn('naccount_security_limit', witness)
+        self.assertEqual(len(witness['user']['rows']), 1104)
+        db = sqlite3.connect(':memory:'); db.row_factory = sqlite3.Row; db.executescript(path.read_text())
+        seen_sql = []
+        def query(_settings, sql, params=None):
+            seen_sql.append(sql)
+            return [dict(row) for row in db.execute(sql, params or [])]
+        try:
+            db.execute("DELETE FROM naccount_security_limit")
+            with patch.object(life, 'query', side_effect=query):
+                life.prove_rows(self.settings, witness)
+            self.assertTrue(any('WHERE rowid > ?' in sql for sql in seen_sql))
+            self.assertFalse(any('OFFSET' in sql for sql in seen_sql))
+        finally:
+            db.close()
+
     def test_snapshot_refuses_attach(self):
         path=self.directory/'unsafe.sql';path.write_text("ATTACH DATABASE 'outside.db' AS bad;", encoding='utf-8')
         with self.assertRaises(sqlite3.DatabaseError): life.snapshot_witness(path)
@@ -76,11 +101,11 @@ class LifecycleTests(unittest.TestCase):
     def test_workers_dev_config_preserves_required_flags_and_removes_unsafe_channels(self):
         path=self.directory/'config.json';write_json(path,self.settings)
         self.assertEqual(sba.deploy.config(path,'server')['server']['url'],self.settings['server']['url'])
-        base={'main':'src/index.tsx','compatibility_flags':['nodejs_compat'],'send_email':[{}],'services':[{}],'queues':{},'triggers':{},'unsafe':{}}
+        base={'main':'src/index.tsx','compatibility_flags':['nodejs_compat'],'send_email':[{}],'services':[{}],'queues':{},'triggers':{},'unsafe':{},'placement':{'mode':'smart'},'observability':{'enabled':True}}
         result=sba.deploy.runtime_config(base,{**self.settings,'_sbaPreview':True},'server')
         self.assertTrue(result['workers_dev']);self.assertEqual(result['routes'],[])
         self.assertEqual(result['compatibility_flags'],['global_fetch_strictly_public','nodejs_compat'])
-        self.assertFalse(set(result)&{'send_email','services','queues','triggers','unsafe'})
+        self.assertFalse(set(result)&{'send_email','services','queues','triggers','unsafe','placement','observability'})
 
     def test_actual_javascript_guard_blocks_egress_and_external_redirects(self):
         (self.directory/'naccount-preview-guard.mjs').write_text(life.preview_guard(self.settings,'server'),encoding='utf-8')

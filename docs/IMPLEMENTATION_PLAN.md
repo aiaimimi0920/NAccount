@@ -1,5 +1,17 @@
 # 初始工程落地范围
 
+## NA-17：全栈安全闭环、边缘性能、OIDC 跨应用 SSO 与三端双语升级（SBA 3.3.0，2026-11-22）
+
+基于主仓库 `b28f7077` 与定制 `8a561bb8` 完成全栈优化，经用户授权提交定制历史并导出 SBA `3.3.0` 补丁栈：
+
+- **定制提交与补丁栈**：`9ba7db9`（`NAccount-Patch-Topic: admin-loading`）与 `13e7943505c59898ebb49495ea342fe9985902d1`（`NAccount-Patch-Topic: user-portal`），共导出 15 个补丁，generation `4f5b4874a029faf51cb5054866b5fdc37700b1a5fdfe5b0149ad914ef37217d8`；既有历史 generation 保留不变。
+- **核心范围**：
+  1. 安全闭环：补齐找回密码重置、OAuth policy 改密/改邮箱/重置 MFA、后台停用账号的 `securityVersion` 递增；个人中心换绑联系人手机号保持会话不断开；修复已注销社交墓碑重登 500（改为 403 `UserDisabled`）与后台删号残留；修复空邮件 Logo 裂图、无状态 `/favicon.svg` & `/favicon.ico`、OTP `issuer` 与 Passkey `rpName`。
+  2. 性能与拆包：WebCrypto `PBKDF2-SHA256` 密码哈希（存量 bcrypt 登录平滑升级）与 `SHA-256` 恢复码；SQLite `0051_naccount_optimization.sql`；`DB.batch` 合并限流、`waitUntil` 异步过期清理与日志写入、单次 `CryptoKey` 公钥验签与 Google JWKS 短缓存；前端 Vite ES Module 拆包与单一 `client.css` 合并。
+  3. OIDC 与多端体验：`GET/POST /oauth2/v1/userinfo` 补齐 `sub` 与 `naccount_profile` 字段、`id_token` 映射 `nickname`；跨应用主身份 SSO（含 Consent/App-MFA 校验与 `prompt=none`）；`/token` 校验可选 `client_id`/`redirect_uri`；`redirect_uri` 保留路径大小写并放行安全自定义 Scheme；`admin-panel` 补齐 270 键 `zh.json` 与 `/zh/*` 路由；`/account` 支持中英双语、自助撤销应用授权、活跃会话管理、无验证邮箱社交账号绑定/注销解锁与 Passkey 入口。
+  4. 工程治理与 SBA：通过 `authRuntime.ts` 还原 52 个被侵入上游表单/视图文件；`scripts/stack.py` 新增 `prune`、智能临时目录与长路径保护；`.sba/` 启用 Smart Placement + Observability（preview 自动剥离）、`rowid > ?` 游标快照与瞬态表排除；GitHub Actions 新增 `melody-auth` 双端完整测试构建流水线。
+- **验证证据**：主仓库 Python 合同测试 `114/114` 通过；`server` `tsc --noEmit` 0 错误、`test:check:cf` `156` 文件 `3,202/3,202` 通过、`test:check:cf-key-rotate` `3/3` 通过、Vite 构建与 Wrangler dry-run 通过；`admin-panel` `tsc --noEmit` 0 错误、`test:check` `48` 文件 `477/477` 通过、OpenNext 构建与 Wrangler dry-run 通过。尚未执行真实 Cloudflare 云端写入（线上更新须通过 SpringBok 或受控 `CLOUDFLARE_API_TOKEN` 执行并审阅 `0051` 迁移）。
+
 ## NA-16：统一托管登录面板与请求等待优化（3.2.8 已上线并独立验证，2026-10-24）
 
 用户授权审视当前账号系统、优先改善访问慢的问题并提供其他应用共用的登录面板。

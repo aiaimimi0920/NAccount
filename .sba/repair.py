@@ -74,16 +74,10 @@ def data_witness(settings):
         name = lifecycle.sql_name(table)
         columns = [row['name'] for row in lifecycle.query(settings, 'PRAGMA table_info(' + name + ')')]
         require(bool(columns))
-        hashes = []; size = 0
-        for offset in range(0, 100001, 500):
-            rows = lifecycle.query(settings, 'SELECT * FROM ' + name + ' ORDER BY rowid LIMIT 500 OFFSET ?', [offset])
-            size += len(json.dumps(rows).encode()); require(size <= 64 * 1024 * 1024)
-            hashes.extend(lifecycle.row_digest([row[column] for column in columns]) for row in rows)
-            require(len(hashes) <= 100000)
-            if len(rows) < 500:
-                break
-        else:
-            raise StackError('Repair data witness exceeds bounded size')
+        hashes = lifecycle.fetch_table_digests(
+            lifecycle.query, settings, table, columns,
+            max_rows=100000, max_json_bytes=64 * 1024 * 1024,
+            overflow_error='Repair data witness exceeds bounded size')
         result['tables'][table] = digest({'columns': columns, 'rows': sorted(hashes)})
     require(not lifecycle.query(settings, 'PRAGMA foreign_key_check'))
     return result
@@ -178,16 +172,9 @@ def execute(request, settings, root, on_stage, configure_admin, readiness):
     data = data_witness(settings); keys = key_witness(settings)
     current, current_secret = configure_admin(settings, read_only=True)
     require(current == settings and current_secret == secret)
-    previous_secret = os.environ.get('SERVER_CLIENT_SECRET')
-    try:
-        os.environ['SERVER_CLIENT_SECRET'] = secret
+    with deploy.temporary_secret('SERVER_CLIENT_SECRET', secret):
         on_stage('admin-publish', True)
         deploy.publish(release, migrate=False)
-    finally:
-        if previous_secret is None:
-            os.environ.pop('SERVER_CLIENT_SECRET', None)
-        else:
-            os.environ['SERVER_CLIENT_SECRET'] = previous_secret
     on_stage('preservation', True)
     require(data_witness(settings) == data and key_witness(settings) == keys)
     on_stage('readiness', True)

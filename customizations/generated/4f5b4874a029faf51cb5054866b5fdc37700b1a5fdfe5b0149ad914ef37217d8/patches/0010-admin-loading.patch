@@ -1,0 +1,74 @@
+From ce98fe8ce513f9c65f19330567251cc8fc19504a Mon Sep 17 00:00:00 2001
+From: aiaimimi0920 <153103332+aiaimimi0920@users.noreply.github.com>
+Date: Thu, 22 Oct 2026 23:57:49 +0800
+Subject: [PATCH] NA-13: remove SSO work from bearer-only management requests
+
+NAccount-Patch-Topic: admin-loading
+---
+ .../src/__tests__/normal/request-latency.test.ts  | 15 ++++++++++++++-
+ server/src/middlewares/setup.ts                   |  6 +++---
+ 2 files changed, 17 insertions(+), 4 deletions(-)
+
+diff --git a/server/src/__tests__/normal/request-latency.test.ts b/server/src/__tests__/normal/request-latency.test.ts
+index d2e5d8f1d4fa81709c4b34751e10323298080fe2..7304969c1bca0f830420ecd08efac6909da1c367 100644
+--- a/server/src/__tests__/normal/request-latency.test.ts
++++ b/server/src/__tests__/normal/request-latency.test.ts
+@@ -3,12 +3,14 @@ import { Hono } from 'hono'
+ import { typeConfig, routeConfig } from 'configs'
+ import { session } from 'middlewares/setup'
+ import { kvService } from 'services'
++import userRoutes from 'routes/user'
+ 
+ afterEach(() => vi.restoreAllMocks())
+ 
+ describe('stateless request session budget', () => {
+   it.each([
+-    '/', '/account', '/account/', '/account/config', '/account/api/profile', '/account/api/apps',
++    '/', '/account', '/account/', '/account/config', '/account/api/profile', '/account/api/apps', '/info',
++    '/api/v1/users', '/api/v1/users/example/active-sessions', '/api/v1/apps', '/api/v1/logs',
+     '/.well-known/openid-configuration', '/.well-known/jwks.json',
+     routeConfig.OauthRoute.Token, routeConfig.OauthRoute.Userinfo, routeConfig.OauthRoute.Revoke,
+     routeConfig.IdentityRoute.AuthorizeView, routeConfig.IdentityRoute.ProcessView,
+@@ -26,6 +28,17 @@ describe('stateless request session budget', () => {
+     expect(response.headers.get('Set-Cookie')).toBeNull()
+   })
+ 
++  it('still rejects missing bearer authentication on a real admin business route without loading an SSO key', async () => {
++    const secret = vi.spyOn(kvService, 'getSessionSecret').mockRejectedValue(new Error('unnecessary KV request'))
++    const app = new Hono<typeConfig.Context>()
++    app.use('*', session)
++    app.route('/', userRoutes)
++    const response = await app.request('/api/v1/users', {}, { SERVER_SESSION_EXPIRES_IN: 1800 } as typeConfig.Bindings)
++    expect(response.status).toBe(401)
++    expect(secret).not.toHaveBeenCalled()
++    expect(response.headers.get('Set-Cookie')).toBeNull()
++  })
++
+   it.each([routeConfig.OauthRoute.Authorize, routeConfig.OauthRoute.Logout,
+     routeConfig.IdentityRoute.Logout, routeConfig.IdentityRoute.AuthorizeAccount,
+     routeConfig.IdentityRoute.AuthorizePassword, routeConfig.IdentityRoute.ProcessEmailMfa,
+diff --git a/server/src/middlewares/setup.ts b/server/src/middlewares/setup.ts
+index bc74bacb7673d019e0f7d1b45440a29f55095b0a..d9ec6446a47b3039dfa39356862a7bd05c62818d 100644
+--- a/server/src/middlewares/setup.ts
++++ b/server/src/middlewares/setup.ts
+@@ -18,9 +18,9 @@ import { timed } from 'utils/timing'
+ const store = new CookieStore()
+ 
+ // These handlers use bearer tokens or their own one-time proofs, never the SSO session.
+-// New authentication routes outside the token/proof-only account namespace keep the session guard.
++// New authentication routes outside the token/proof-only account and bearer API namespaces keep the session guard.
+ const statelessPaths = new Set<string>([
+-  '/', '/account', '/account/',
++  '/', '/account', '/account/', '/info',
+   '/.well-known/openid-configuration', '/.well-known/jwks.json',
+   routeConfig.OauthRoute.Token, routeConfig.OauthRoute.Userinfo, routeConfig.OauthRoute.Revoke,
+   routeConfig.IdentityRoute.AuthorizeView, routeConfig.IdentityRoute.ProcessView,
+@@ -33,7 +33,7 @@ export const session = async (
+   c: Context<typeConfig.Context>, next: Next,
+ ) => {
+   const { SERVER_SESSION_EXPIRES_IN: expiresIn } = env(c)
+-  if (!expiresIn || statelessPaths.has(c.req.path) || c.req.path.startsWith('/account/')) {
++  if (!expiresIn || statelessPaths.has(c.req.path) || c.req.path.startsWith('/account/') || c.req.path.startsWith('/api/v1/')) {
+     await next()
+     return
+   }

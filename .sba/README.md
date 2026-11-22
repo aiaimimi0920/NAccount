@@ -1,5 +1,12 @@
 # Cloudflare 部署与更新
 
+## 3.3.0：全栈安全、边缘性能与多端双语升级（NA-17）
+
+- **边缘计算放置与可观测性**：非 preview 部署配置为认证与后台 Worker 开启 Cloudflare Smart Placement（`placement.mode = "smart"`）及脱敏 Workers Observability（`observability.enabled = true`）；`_sbaPreview` 自动剥离两项配置，保持隔离副本最小副作用。
+- **D1 保全快照性能与瞬态表隔离**：`snapshot_witness` 从 `OFFSET` 分页升级为基于 `WHERE rowid > ?`（无 rowid 表回退主键游标）的 $O(N)$ 游标分页，消除万级用户表的二次方扫描与超时风险；排除 `naccount_security_request`、`naccount_security_limit`、`naccount_otp_use`、`naccount_link_request` 四张短期瞬态表，并在 `preview` 结束校验源库时容忍构建期间线上正常新增行（`exact=False`），避免高并发登录误报 `unknown`。
+- **后台多语言回调与新增迁移 0051**：`admin_locales` 白名单纳入 `zh`（`en` / `fr` / `zh`），与 `admin-panel` 新增简体中文路由一致；新增 SQLite 迁移 `0051_naccount_optimization.sql`（瞬态表清理索引与应用目录 `isPublic`/`homepageUrl`/`description` 列）；去重 `d1_query`、`temporary_secret` 并消除 `springbok.py` 重复调用 `portal.configure`。
+- 本版定制 HEAD 为 `13e7943505c59898ebb49495ea342fe9985902d1`，generation `4f5b4874a029faf51cb5054866b5fdc37700b1a5fdfe5b0149ad914ef37217d8`（15 patches）；上线升级需执行 D1 备份并应用 `0051` 迁移。
+
 ## 3.2.8：统一托管登录与请求等待优化
 
 新增供接入应用使用的 `/login`，复用完整 authorize/PKCE/SSO/MFA/consent 流程，旧

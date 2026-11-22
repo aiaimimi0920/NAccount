@@ -92,11 +92,7 @@ def public_settings(settings, manifest):
 
 
 def database_query(settings: dict, sql: str, params: list) -> list:
-    response = deploy.cloud_api(settings, f"/d1/database/{settings['database']['id']}/query",
-                                method='POST', payload={'sql': sql, 'params': params})
-    if not isinstance(response, list) or len(response) != 1 or response[0].get('success') is not True:
-        raise StackError('D1 query failed')
-    return response[0]['results']
+    return deploy.d1_query(settings, sql, params, error='D1 query failed')
 
 
 def configure_admin(settings: dict, *, read_only: bool = False) -> tuple[dict, str]:
@@ -239,22 +235,15 @@ def execute(value: dict, root: Path = ROOT, *, on_stage=lambda _stage, _writes: 
     settings, secret = configure_admin(settings)
     on_stage('admin-build', True)
     admin = deploy.build(root, settings, 'admin')
-    previous_secret = os.environ.get('SERVER_CLIENT_SECRET')
-    try:
-        os.environ['SERVER_CLIENT_SECRET'] = secret
+    with deploy.temporary_secret('SERVER_CLIENT_SECRET', secret):
         on_stage('admin-publish', True)
         deploy.publish(admin, migrate=False)
-    finally:
-        if previous_secret is None:
-            os.environ.pop('SERVER_CLIENT_SECRET', None)
-        else:
-            os.environ['SERVER_CLIENT_SECRET'] = previous_secret
     on_stage('readiness', True)
     checks.extend(readiness(settings))
     result = None
     if preview:
-        # 源数据仅调用 export/query，最后再核对源旧行未丢失；不复制源 KV 会话或签名材料。
-        lifecycle.prove_rows(source, snapshot['witness'], exact=True)
+        # 源数据仅调用 export/query，核对源旧行全部保留且未被篡改；允许源库在构建窗口内正常新增业务行。
+        lifecycle.prove_rows(source, snapshot['witness'], exact=False)
         lifecycle.isolation_checks(settings)
         checks.extend({'id': name, 'passed': True} for name in ('source-unchanged', 'side-effects-isolated'))
         result = {'resources': [{'key': row['key'], 'status': 'created'} for row in request['context']['resources']],

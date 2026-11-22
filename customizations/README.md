@@ -14,6 +14,7 @@
 | `update` | 获取官方分支，在安全引用保护下 rebase 本地定制，成功后自动 finalize/export |
 | `finalize` | 手工解决 rebase 冲突并继续完成后，推进官方基线并导出新栈 |
 | `abandon` | 用户明确中止 rebase、恢复旧状态后，校验并归档待处理记录 |
+| `prune` | 显式清理未被引用的历史 `generated/<SHA256>` 快照，始终保留 `current.json` 当前锁定的 generation |
 
 上述命令通过根目录 `.\naccount.ps1` 调用。不接受 dirty checkout、父仓库回退或已有重放目标，不猜测如何处理未提交内容。
 

@@ -29,8 +29,14 @@ def local_path(path: Path) -> Path:
     return path
 
 
+def default_temp_dir() -> Path:
+    if os.name == "nt" and (DEFAULT_TEMP.exists() or DEFAULT_TEMP.parent.exists()):
+        return DEFAULT_TEMP
+    return Path(tempfile.gettempdir())
+
+
 def scratch(prefix: str) -> Path:
-    parent = Path(os.environ.get("NACCOUNT_TEMP", str(DEFAULT_TEMP) if os.name == "nt" else tempfile.gettempdir()))
+    parent = Path(os.environ.get("NACCOUNT_TEMP", str(default_temp_dir())))
     parent = local_path(parent)
     parent.mkdir(parents=True, exist_ok=True)
     return Path(tempfile.mkdtemp(prefix=prefix, dir=parent))
@@ -83,13 +89,23 @@ def run(args: list[str], cwd: Path, *, check: bool = True, data: bytes | None = 
     return result
 
 
+def git_env() -> dict | None:
+    if os.environ.get("GIT_EDITOR") == "false" or os.environ.get("GIT_TERMINAL_PROMPT") != "0":
+        env = os.environ.copy()
+        if env.get("GIT_EDITOR") == "false":
+            env.pop("GIT_EDITOR", None)
+        env["GIT_TERMINAL_PROMPT"] = "0"
+        return env
+    return None
+
+
 def git(repo: Path, *args: str, check: bool = True) -> str:
-    return run(["git", "-c", "core.quotepath=false", "-C", str(repo), *args], repo,
-               check=check).stdout.decode("utf-8", errors="strict").strip()
+    return run(["git", "-c", "core.quotepath=false", "-c", "core.longpaths=true", "-C", str(repo), *args], repo,
+               check=check, env=git_env()).stdout.decode("utf-8", errors="strict").strip()
 
 
 def git_bytes(repo: Path, *args: str) -> bytes:
-    return run(["git", "-C", str(repo), *args], repo).stdout
+    return run(["git", "-c", "core.longpaths=true", "-C", str(repo), *args], repo, env=git_env()).stdout
 
 
 def independent(repo: Path) -> None:
@@ -398,12 +414,29 @@ class Stack:
         pending.rename(pending.with_name("naccount-update-aborted-" + uuid.uuid4().hex + ".json"))
         return lock
 
+    def prune(self) -> dict:
+        """Remove inactive historical generation snapshots after verifying the active catalog."""
+        if self.pending_path().exists() if self.source.is_dir() and (self.source / ".git").is_dir() else False:
+            raise StackError("Cannot prune generations while an upstream update is pending")
+        active_folder, lock = self.load()
+        generated_root = self.catalog / "generated"
+        removed = []
+        if generated_root.is_dir():
+            for entry in sorted(generated_root.iterdir()):
+                if entry.resolve() == active_folder.resolve():
+                    continue
+                if entry.is_symlink() or not entry.is_dir():
+                    raise StackError(f"Unexpected entry in generated catalog: {entry}")
+                shutil.rmtree(entry)
+                removed.append(entry.name)
+        return {**lock, "prunedGenerations": removed}
+
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, default=ROOT)
     commands = parser.add_subparsers(dest="command", required=True)
-    for name in ("init", "export", "update", "finalize", "abandon"):
+    for name in ("init", "export", "update", "finalize", "abandon", "prune"):
         commands.add_parser(name)
     verify = commands.add_parser("verify")
     verify.add_argument("--catalog-only", action="store_true")

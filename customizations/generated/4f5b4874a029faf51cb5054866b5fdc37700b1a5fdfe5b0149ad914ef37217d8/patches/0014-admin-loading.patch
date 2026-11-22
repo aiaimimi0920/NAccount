@@ -1,0 +1,933 @@
+From 9ba7db929b95bc88ef077f98747d073ac53bd26e Mon Sep 17 00:00:00 2001
+From: aiaimimi0920 <153103332+aiaimimi0920@users.noreply.github.com>
+Date: Sun, 22 Nov 2026 10:08:47 +0800
+Subject: [PATCH] NA-17: add complete zh admin locale and inline NAccount
+ branding
+
+NAccount-Patch-Topic: admin-loading
+---
+ admin-panel/.env.example          |   2 +-
+ admin-panel/app/Setup.test.tsx    | 177 +++++++++++++++++-
+ admin-panel/app/Setup.tsx         | 137 ++++++++++----
+ admin-panel/app/[lang]/layout.tsx |   7 +-
+ admin-panel/i18n/request.ts       |   2 +-
+ admin-panel/i18n/routing.ts       |   2 +-
+ admin-panel/middleware.ts         |   2 +-
+ admin-panel/translations/en.json  |   2 +-
+ admin-panel/translations/fr.json  |   7 +-
+ admin-panel/translations/zh.json  | 298 ++++++++++++++++++++++++++++++
+ 10 files changed, 594 insertions(+), 42 deletions(-)
+ create mode 100644 admin-panel/translations/zh.json
+
+diff --git a/admin-panel/.env.example b/admin-panel/.env.example
+index addb21042e5a88d7bbc680e37649dafda02fbee6..a6658074f412bc3f2776ecd509ea19b17b4f8763 100644
+--- a/admin-panel/.env.example
++++ b/admin-panel/.env.example
+@@ -1,6 +1,6 @@
+ NEXT_PUBLIC_CLIENT_URI=http://localhost:3000 # Replace with the host of your admin panel app
+ NEXT_PUBLIC_SERVER_URI=http://localhost:8787 # Replace with your melody-auth server base uri
+ NEXT_PUBLIC_CLIENT_ID= # Put your admin panel SPA clientId here
+-NEXT_PUBLIC_SUPPORTED_LOCALES=en,fr # Replace with your supported locales
++NEXT_PUBLIC_SUPPORTED_LOCALES=en,fr,zh # Replace with your supported locales
+ SERVER_CLIENT_ID= # Put your admin panel S2S clientId here
+ SERVER_CLIENT_SECRET= # Put your admin panel S2S clientSecret here
+diff --git a/admin-panel/app/Setup.test.tsx b/admin-panel/app/Setup.test.tsx
+index 7739e9bf6617c3e8a8ef270d4b75b64692f12fdc..b8521d0e276ab8c00c6dd2019e4c88f3355c9b8a 100644
+--- a/admin-panel/app/Setup.test.tsx
++++ b/admin-panel/app/Setup.test.tsx
+@@ -4,13 +4,17 @@ import {
+   expect,
+   vi,
+   beforeEach,
++  afterEach,
+ } from 'vitest'
+ import {
+   render,
+   screen,
+   fireEvent,
+ } from '@testing-library/react'
+-import { useAuth } from '@melody-auth/react'
++import {
++  AuthProvider,
++  useAuth,
++} from '@melody-auth/react'
+ import {
+   usePathname,
+   useRouter,
+@@ -27,6 +31,10 @@ import {
+ import {
+   proxyTool, typeTool,
+ } from 'tools'
++import { routing } from 'i18n/routing'
++import enMessages from 'translations/en.json'
++import frMessages from 'translations/fr.json'
++import zhMessages from 'translations/zh.json'
+ 
+ const mockSendNextRequest = vi.spyOn(
+   proxyTool,
+@@ -38,9 +46,9 @@ vi.mock(
+   '@melody-auth/react',
+   () => ({
+     useAuth: vi.fn(),
+-    AuthProvider: ({ children }: { children: React.ReactNode }) => (
++    AuthProvider: vi.fn(({ children }: { children: React.ReactNode }) => (
+       <div data-testid='auth-provider'>{children}</div>
+-    ),
++    )),
+   }),
+ )
+ 
+@@ -80,6 +88,28 @@ vi.mock(
+   }),
+ )
+ 
++const flattenTranslationEntries = (
++  obj: Record<string, unknown>,
++  prefix = '',
++): Record<string, string> => {
++  const result: Record<string, string> = {}
++  for (const [key, value] of Object.entries(obj)) {
++    const fullKey = prefix ? `${prefix}.${key}` : key
++    if (value && typeof value === 'object' && !Array.isArray(value)) {
++      Object.assign(
++        result,
++        flattenTranslationEntries(
++          value as Record<string, unknown>,
++          fullKey,
++        ),
++      )
++    } else {
++      result[fullKey] = String(value)
++    }
++  }
++  return result
++}
++
+ describe(
+   'Setup Component',
+   () => {
+@@ -88,9 +118,12 @@ describe(
+     const mockLoginRedirect = vi.fn()
+     const mockLogoutRedirect = vi.fn()
+     const mockPush = vi.fn()
++    const originalSupportedLocales = process.env.NEXT_PUBLIC_SUPPORTED_LOCALES
+ 
+     beforeEach(() => {
+       vi.clearAllMocks()
++      delete process.env.NEXT_PUBLIC_SUPPORTED_LOCALES
++      localStorage.clear()
+       mockAcquireToken.mockResolvedValue('test-token')
+       mockSendNextRequest.mockResolvedValue({ configs: {} })
+       errorSignal.value = ''
+@@ -98,6 +131,7 @@ describe(
+ 
+       vi.mocked(useTranslations).mockReturnValue(vi.fn((key: string) => key) as any)
+       vi.mocked(useLocale).mockReturnValue('en')
++      vi.mocked(usePathname).mockReturnValue(undefined as any)
+ 
+       vi.mocked(useAuth).mockReturnValue({
+         isAuthenticating: false,
+@@ -118,6 +152,14 @@ describe(
+       vi.mocked(useRouter).mockReturnValue({ push: mockPush } as any)
+     })
+ 
++    afterEach(() => {
++      if (originalSupportedLocales === undefined) {
++        delete process.env.NEXT_PUBLIC_SUPPORTED_LOCALES
++      } else {
++        process.env.NEXT_PUBLIC_SUPPORTED_LOCALES = originalSupportedLocales
++      }
++    })
++
+     it(
+       'renders loading spinner when authenticating',
+       () => {
+@@ -263,7 +305,9 @@ describe(
+       'shows a retry instead of an endless spinner when configuration fails',
+       async () => {
+         mockSendNextRequest.mockResolvedValueOnce(undefined).mockResolvedValueOnce({ configs: {} })
+-        render(<NextIntlClientProvider locale='en' messages={{}}><Setup>Loaded content</Setup></NextIntlClientProvider>)
++        render(<NextIntlClientProvider
++          locale='en'
++          messages={{}}><Setup>Loaded content</Setup></NextIntlClientProvider>)
+         expect(await screen.findByText('layout.configLoadFailed')).toBeInTheDocument()
+         expect(screen.queryByTestId('spinner')).not.toBeInTheDocument()
+         fireEvent.click(screen.getByText('layout.retry'))
+@@ -300,5 +344,130 @@ describe(
+         expect(errorSignal.value).toBe('')
+       },
+     )
++
++    it(
++      'renders Chinese language switch option when NEXT_PUBLIC_SUPPORTED_LOCALES="en,zh"',
++      async () => {
++        process.env.NEXT_PUBLIC_SUPPORTED_LOCALES = 'en,zh'
++        configSignal.value = {} as any
++        vi.mocked(useLocale).mockReturnValue('en')
++
++        render(<NextIntlClientProvider
++          locale='en'
++          messages={{}}><Setup>Test</Setup></NextIntlClientProvider>)
++
++        const dropdownTrigger = screen.getByTestId('userInfoDropdown')
++        fireEvent.pointerDown(dropdownTrigger)
++
++        const zhSwitch = await screen.findByText('ZH')
++        expect(zhSwitch).toBeInTheDocument()
++        expect(zhSwitch.closest('a')).toHaveAttribute(
++          'href',
++          '/zh/dashboard',
++        )
++        expect(screen.queryByText('FR')).not.toBeInTheDocument()
++      },
++    )
++
++    it(
++      'redirects unsupported locale to first supported locale',
++      () => {
++        process.env.NEXT_PUBLIC_SUPPORTED_LOCALES = 'zh,en'
++        configSignal.value = {} as any
++        vi.mocked(useLocale).mockReturnValue('fr')
++
++        render(<NextIntlClientProvider
++          locale='fr'
++          messages={{}}><Setup>Test</Setup></NextIntlClientProvider>)
++
++        expect(mockPush).toHaveBeenCalledWith('/zh/dashboard')
++      },
++    )
++
++    it(
++      'redirects to /zh/dashboard on onLoginSuccess({ locale: "zh" }) when supported',
++      () => {
++        process.env.NEXT_PUBLIC_SUPPORTED_LOCALES = 'en,zh'
++        configSignal.value = {} as any
++        vi.mocked(useLocale).mockReturnValue('en')
++
++        render(<NextIntlClientProvider
++          locale='en'
++          messages={{}}><Setup>Test</Setup></NextIntlClientProvider>)
++
++        const authProviderProps = vi.mocked(AuthProvider).mock.calls.at(-1)?.[0]
++        expect(authProviderProps?.onLoginSuccess).toBeTypeOf('function')
++
++        authProviderProps?.onLoginSuccess?.({ locale: 'fr' })
++        expect(mockPush).not.toHaveBeenCalled()
++
++        authProviderProps?.onLoginSuccess?.({ locale: 'en' })
++        expect(mockPush).not.toHaveBeenCalled()
++
++        authProviderProps?.onLoginSuccess?.({ locale: 'zh' })
++        expect(mockPush).toHaveBeenCalledWith('/zh/dashboard')
++      },
++    )
++
++    it(
++      'renders inline SVG brand logo without valuemelody.com request by default and uses COMPANY_LOGO_URL when provided',
++      async () => {
++        mockSendNextRequest.mockResolvedValueOnce({ configs: {} })
++        const {
++          container, unmount,
++        } = render(<NextIntlClientProvider
++          locale='en'
++          messages={{}}><Setup>Loaded default logo</Setup></NextIntlClientProvider>)
++
++        expect(await screen.findByText('Loaded default logo')).toBeInTheDocument()
++        expect(screen.getByTestId('brandLogoSvg')).toBeInTheDocument()
++        expect(container.querySelectorAll('img')).toHaveLength(0)
++        expect(container.innerHTML).not.toContain('valuemelody.com')
++
++        unmount()
++
++        mockSendNextRequest.mockResolvedValueOnce({ configs: { COMPANY_LOGO_URL: '/custom-brand.svg' } })
++        const customRender = render(<NextIntlClientProvider
++          locale='en'
++          messages={{}}><Setup>Loaded custom logo</Setup></NextIntlClientProvider>)
++
++        expect(await screen.findByText('Loaded custom logo')).toBeInTheDocument()
++        expect(screen.queryByTestId('brandLogoSvg')).not.toBeInTheDocument()
++        const customImg = customRender.container.querySelector('img')
++        expect(customImg).not.toBeNull()
++        expect(customImg).toHaveAttribute(
++          'src',
++          '/custom-brand.svg',
++        )
++        expect(customRender.container.innerHTML).not.toContain('valuemelody.com')
++      },
++    )
++
++    it(
++      'keeps en.json, fr.json, and zh.json translation keys, placeholders, and NAccount brand aligned',
++      () => {
++        expect(routing.locales).toEqual(['en', 'fr', 'zh'])
++        expect(enMessages.layout.brand).toBe('NAccount')
++        expect(frMessages.layout.brand).toBe('NAccount')
++        expect(zhMessages.layout.brand).toBe('NAccount')
++
++        const flatEn = flattenTranslationEntries(enMessages)
++        const flatFr = flattenTranslationEntries(frMessages)
++        const flatZh = flattenTranslationEntries(zhMessages)
++
++        const enKeys = Object.keys(flatEn).sort()
++        expect(Object.keys(flatFr).sort()).toEqual(enKeys)
++        expect(Object.keys(flatZh).sort()).toEqual(enKeys)
++
++        for (const key of enKeys) {
++          expect(flatZh[key].trim().length).toBeGreaterThan(0)
++          const enPlaceholders = (flatEn[key].match(/\{[^}]+\}/g) ?? []).sort()
++          const frPlaceholders = (flatFr[key].match(/\{[^}]+\}/g) ?? []).sort()
++          const zhPlaceholders = (flatZh[key].match(/\{[^}]+\}/g) ?? []).sort()
++          expect(frPlaceholders).toEqual(enPlaceholders)
++          expect(zhPlaceholders).toEqual(enPlaceholders)
++        }
++      },
++    )
+   },
+ )
+diff --git a/admin-panel/app/Setup.tsx b/admin-panel/app/Setup.tsx
+index e6de0bdc00892ae97426c794537eca0380072f26..6b13cb532413036b3e60a78793a10934d0a05571 100644
+--- a/admin-panel/app/Setup.tsx
++++ b/admin-panel/app/Setup.tsx
+@@ -53,9 +53,25 @@ import {
+   DropdownMenuSeparator, DropdownMenuTrigger,
+ } from 'components/ui/dropdown-menu'
+ 
+-const locale = typeof localStorage !== 'undefined' && localStorage.getItem('Locale')
++const ALL_SUPPORTED_LOCALES = ['en', 'fr', 'zh'] as const
+ 
+-const AuthSetup = ({ children }: PropsWithChildren) => {
++const resolveSupportedLocales = (): string[] => {
++  if (process.env.NEXT_PUBLIC_SUPPORTED_LOCALES === undefined) {
++    return [...ALL_SUPPORTED_LOCALES]
++  }
++  const parsed = Array.from(new Set(
++    process.env.NEXT_PUBLIC_SUPPORTED_LOCALES
++      .split(',')
++      .map((item) => item.trim())
++      .filter((item) => Boolean(item) && (ALL_SUPPORTED_LOCALES as readonly string[]).includes(item)),
++  ))
++  return parsed.length > 0 ? parsed : ['en']
++}
++
++const AuthSetup = ({
++  children,
++  currentLocale,
++}: PropsWithChildren<{ currentLocale: string }>) => {
+   const t = useTranslations()
+   const state = useSelector((state: RootState) => state.app)
+   const dispatch = useDispatch()
+@@ -65,10 +81,13 @@ const AuthSetup = ({ children }: PropsWithChildren) => {
+     loginRedirect, logoutRedirect, isLoadingUserInfo, acquireUserInfoError,
+   } = useAuth()
+ 
+-  const configLoad = useAdminConfig(isAuthenticated, acquireToken)
++  const configLoad = useAdminConfig(
++    isAuthenticated,
++    acquireToken,
++  )
+ 
+   const handleLogout = () => {
+-    logoutRedirect({ postLogoutRedirectUri: `${process.env.NEXT_PUBLIC_CLIENT_URI}/${locale || 'en'}/dashboard` })
++    logoutRedirect({ postLogoutRedirectUri: `${process.env.NEXT_PUBLIC_CLIENT_URI}/${currentLocale || 'en'}/dashboard` })
+   }
+ 
+   useEffect(
+@@ -90,12 +109,13 @@ const AuthSetup = ({ children }: PropsWithChildren) => {
+   useEffect(
+     () => {
+       if (!isAuthenticated && !isAuthenticating) {
++        const storedLocale = typeof localStorage !== 'undefined' ? localStorage.getItem('Locale') : null
+         loginRedirect({
+-          locale: locale || undefined, org: 'default',
++          locale: currentLocale || storedLocale || undefined, org: 'default',
+         })
+       }
+     },
+-    [isAuthenticated, isAuthenticating, loginRedirect],
++    [currentLocale, isAuthenticated, isAuthenticating, loginRedirect],
+   )
+ 
+   if (isAuthenticating || isLoadingUserInfo || !state.acquireAuthToken) {
+@@ -133,7 +153,12 @@ const AuthSetup = ({ children }: PropsWithChildren) => {
+       <section className='w-full h-screen flex flex-col gap-4 items-center justify-center'>
+         <Alert variant='destructive'>{t('layout.configLoadFailed')}</Alert>
+         <Button onClick={configLoad.retry}>{t('layout.retry')}</Button>
+-        <Button variant='ghost' onClick={handleLogout}>{t('layout.logout')}</Button>
++        <Button
++          variant='ghost'
++          onClick={handleLogout}
++        >
++          {t('layout.logout')}
++        </Button>
+       </section>
+     )
+   }
+@@ -141,7 +166,10 @@ const AuthSetup = ({ children }: PropsWithChildren) => {
+   return children
+ }
+ 
+-const LayoutSetup = ({ children } : PropsWithChildren) => {
++const LayoutSetup = ({
++  children,
++  supportedLocales,
++}: PropsWithChildren<{ supportedLocales: string[] }>) => {
+   const t = useTranslations()
+   const locale = useLocale()
+   const {
+@@ -173,13 +201,17 @@ const LayoutSetup = ({ children } : PropsWithChildren) => {
+ 
+   const isMobile = useIsMobile()
+ 
+-  const supportedLocales = useMemo(
+-    () => {
+-      return process.env.NEXT_PUBLIC_SUPPORTED_LOCALES?.split(',') ?? ['en', 'fr']
+-    },
+-    [],
++  const fallbackLocale = supportedLocales[0] ?? 'en'
++  const switchableLocales = useMemo(
++    () => supportedLocales.filter((item) => item !== locale),
++    [supportedLocales, locale],
+   )
+-  const otherLocale = locale === 'en' ? 'fr' : 'en'
++  const switchTargetPath = pathname && pathname.startsWith('/') && pathname !== '/'
++    ? pathname
++    : routeTool.Internal.Dashboard
++  const companyLogoUrl = typeof configs?.COMPANY_LOGO_URL === 'string'
++    ? configs.COMPANY_LOGO_URL.trim()
++    : ''
+ 
+   useEffect(
+     () => {
+@@ -189,10 +221,10 @@ const LayoutSetup = ({ children } : PropsWithChildren) => {
+           locale,
+         )
+       } else {
+-        nextRouter.push(`/${otherLocale}${routeTool.Internal.Dashboard}`)
++        nextRouter.push(`/${fallbackLocale}${routeTool.Internal.Dashboard}`)
+       }
+     },
+-    [locale, otherLocale, supportedLocales, nextRouter],
++    [locale, fallbackLocale, supportedLocales, nextRouter],
+   )
+ 
+   const handleLogout = () => {
+@@ -208,10 +240,38 @@ const LayoutSetup = ({ children } : PropsWithChildren) => {
+           <SidebarMenu>
+             <SidebarMenuItem>
+               <div className='flex items-center mt-2'>
+-                <img
+-                  src='https://valuemelody.com/logo.svg'
+-                  className='mr-3 h-6'
+-                />
++                {companyLogoUrl
++                  ? (
++                    <img
++                      src={configs.COMPANY_LOGO_URL}
++                      alt=''
++                      className='mr-3 h-6'
++                    />
++                  )
++                  : (
++                    <svg
++                      viewBox='0 0 24 24'
++                      fill='none'
++                      xmlns='http://www.w3.org/2000/svg'
++                      aria-hidden='true'
++                      data-testid='brandLogoSvg'
++                      className='mr-3 h-6 w-6 shrink-0'
++                    >
++                      <rect
++                        width='24'
++                        height='24'
++                        rx='6'
++                        className='fill-primary'
++                      />
++                      <path
++                        d='M7.5 17V7L16.5 17V7'
++                        className='stroke-primary-foreground'
++                        strokeWidth='2.25'
++                        strokeLinecap='round'
++                        strokeLinejoin='round'
++                      />
++                    </svg>
++                  )}
+                 <span className='self-center whitespace-nowrap text-medium font-semibold text-success'>
+                   {t('layout.brand')}
+                 </span>
+@@ -401,16 +461,19 @@ const LayoutSetup = ({ children } : PropsWithChildren) => {
+                     {t('layout.account')}
+                   </Link>
+                 </DropdownMenuItem>
+-                {supportedLocales.includes(otherLocale) && (
+-                  <DropdownMenuItem asChild>
++                {switchableLocales.map((item) => (
++                  <DropdownMenuItem
++                    key={item}
++                    asChild
++                  >
+                     <NextLink
+-                      href={`/${otherLocale}${routeTool.Internal.Dashboard}`}
++                      href={`/${item}${switchTargetPath}`}
+                     >
+                       <Globe />
+-                      {otherLocale.toUpperCase()}
++                      {item.toUpperCase()}
+                     </NextLink>
+                   </DropdownMenuItem>
+-                )}
++                ))}
+               </DropdownMenuGroup>
+               <DropdownMenuSeparator />
+               <DropdownMenuItem>
+@@ -443,6 +506,12 @@ const LayoutSetup = ({ children } : PropsWithChildren) => {
+ const Setup = ({ children } : PropsWithChildren) => {
+   const router = useRouter()
+   const pathname = usePathname()
++  const locale = useLocale()
++
++  const supportedLocales = useMemo(
++    () => resolveSupportedLocales(),
++    [],
++  )
+ 
+   useEffect(
+     () => {
+@@ -451,8 +520,10 @@ const Setup = ({ children } : PropsWithChildren) => {
+     [pathname],
+   )
+ 
+-  // Get the current locale (or default to 'en')
+-  const currentLocale = locale || 'en'
++  const fallbackLocale = supportedLocales[0] ?? 'en'
++  const currentLocale = supportedLocales.includes(locale)
++    ? locale
++    : fallbackLocale
+ 
+   return (
+     <Provider store={store}>
+@@ -461,14 +532,18 @@ const Setup = ({ children } : PropsWithChildren) => {
+         redirectUri={`${process.env.NEXT_PUBLIC_CLIENT_URI}/${currentLocale}/dashboard`}
+         serverUri={process.env.NEXT_PUBLIC_SERVER_URI ?? ''}
+         onLoginSuccess={(attr) => {
+-          if (attr.locale !== locale) {
+-            router.push(`/${attr.locale === 'fr' ? 'fr' : 'en'}${routeTool.Internal.Dashboard}`)
++          if (
++            attr.locale &&
++            supportedLocales.includes(attr.locale) &&
++            attr.locale !== locale
++          ) {
++            router.push(`/${attr.locale}${routeTool.Internal.Dashboard}`)
+           }
+         }}
+       >
+-        <AuthSetup>
++        <AuthSetup currentLocale={currentLocale}>
+           <SidebarProvider>
+-            <LayoutSetup>
++            <LayoutSetup supportedLocales={supportedLocales}>
+               {children}
+             </LayoutSetup>
+           </SidebarProvider>
+diff --git a/admin-panel/app/[lang]/layout.tsx b/admin-panel/app/[lang]/layout.tsx
+index 6094f002b3183adfd7affd2831b51148998d77e3..490b4c11cbabf47b19c7be5459931cc8585f99b4 100644
+--- a/admin-panel/app/[lang]/layout.tsx
++++ b/admin-panel/app/[lang]/layout.tsx
+@@ -4,7 +4,12 @@ import { getMessages } from 'next-intl/server'
+ import { Metadata } from 'next'
+ import Setup from 'app/Setup'
+ 
+-export const metadata: Metadata = { title: 'NAccount · Neuro' }
++const brandFaviconSvg = "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><rect width='24' height='24' rx='6' fill='%23d9ff38'/><path d='M7.5 17V7L16.5 17V7' fill='none' stroke='%2320252b' stroke-width='2.25' stroke-linecap='round' stroke-linejoin='round'/></svg>"
++
++export const metadata: Metadata = {
++  title: 'NAccount · Neuro',
++  icons: { icon: `data:image/svg+xml,${brandFaviconSvg}` },
++}
+ 
+ export default async function RootLayout ({
+   children, params,
+diff --git a/admin-panel/i18n/request.ts b/admin-panel/i18n/request.ts
+index d6ad79ebeeeb54edc5316e0f42f336b2afc9095e..3e164b881a1b109afffaac6ef17dd07d479e727c 100644
+--- a/admin-panel/i18n/request.ts
++++ b/admin-panel/i18n/request.ts
+@@ -1,7 +1,7 @@
+ import { notFound } from 'next/navigation'
+ import { getRequestConfig } from 'next-intl/server'
+ 
+-const locales = ['en', 'fr']
++const locales = ['en', 'fr', 'zh']
+ 
+ export default getRequestConfig(async ({ requestLocale }) => {
+   const locale = await requestLocale || 'en'
+diff --git a/admin-panel/i18n/routing.ts b/admin-panel/i18n/routing.ts
+index a5ddf47ddbaf8737b3e639ba5466ffa0a2faae9b..7a0c9844938d6e1520dbfa717783d304a38f3207 100644
+--- a/admin-panel/i18n/routing.ts
++++ b/admin-panel/i18n/routing.ts
+@@ -1,7 +1,7 @@
+ import { defineRouting } from 'next-intl/routing'
+ 
+ export const routing = defineRouting({
+-  locales: ['en', 'fr'],
++  locales: ['en', 'fr', 'zh'],
+   defaultLocale: 'en',
+   localeDetection: false,
+   localeCookie: false,
+diff --git a/admin-panel/middleware.ts b/admin-panel/middleware.ts
+index 2736ffc554de734cc01d6bf884f95e85090681f3..d337a968407ac204e953672dc9d2617b24d3ec51 100644
+--- a/admin-panel/middleware.ts
++++ b/admin-panel/middleware.ts
+@@ -7,4 +7,4 @@ import { routing } from './i18n/routing'
+ 
+ export default createMiddleware(routing)
+ 
+-export const config = { matcher: ['/', '/(en|fr)/:path*'] }
++export const config = { matcher: ['/', '/(en|fr|zh)/:path*'] }
+diff --git a/admin-panel/translations/en.json b/admin-panel/translations/en.json
+index 28dcd6cea11dcc3bb300db7af5caf668ac7be3ae..6171b6fefcef0b27d3e67e5ae26ac592f75a1374 100644
+--- a/admin-panel/translations/en.json
++++ b/admin-panel/translations/en.json
+@@ -3,7 +3,7 @@
+     "configLoadFailed": "Unable to load the admin configuration. Retry, or sign out and sign in again if your permissions changed.",
+     "retry": "Retry",
+     "blocked": "Only super admin can access this app.",
+-    "brand": "Melody Auth",
++    "brand": "NAccount",
+     "logout": "Logout",
+     "users": "Users",
+     "userAttributes": "User Attributes",
+diff --git a/admin-panel/translations/fr.json b/admin-panel/translations/fr.json
+index 62e1b35685ea3fbd864f7e82094212d13707f683..01c55f42aef681079219fbef6323d2284173c64f 100644
+--- a/admin-panel/translations/fr.json
++++ b/admin-panel/translations/fr.json
+@@ -3,7 +3,7 @@
+     "configLoadFailed": "Impossible de charger la configuration. Réessayez ou reconnectez-vous si vos autorisations ont changé.",
+     "retry": "Réessayer",
+     "blocked": "Seul le super administrateur peut accéder à cette application.",
+-    "brand": "Melody Auth",
++    "brand": "NAccount",
+     "logout": "Déconnexion",
+     "users": "Utilisateurs",
+     "userAttributes": "Attributs utilisateur",
+@@ -141,6 +141,10 @@
+     "noIP": "Pas d'IP",
+     "lockedIPs": "IPs verrouillées",
+     "unlock": "Déverrouiller tout",
++    "passkey": "Passkey",
++    "passkeyEnrolled": "Passkey activé",
++    "removePasskey": "Supprimer",
++    "removePasskeyTitle": "Êtes-vous sûr de vouloir supprimer ce passkey ?",
+     "noUsers": "Aucun utilisateur trouvé",
+     "impersonate": "Impersonation",
+     "impersonateTitle": "Impersoner {user}",
+@@ -241,6 +245,7 @@
+     "allUsers": "Tous les utilisateurs de cette organisation",
+     "viewAllUsers": "Voir tous les utilisateurs de cette organisation",
+     "viewActiveUsers": "Voir les utilisateurs actuellement actifs dans cette organisation",
++    "slug": "Slug",
+     "name": "Nom",
+     "status": "Statut",
+     "new": "Créer une organisation",
+diff --git a/admin-panel/translations/zh.json b/admin-panel/translations/zh.json
+new file mode 100644
+index 0000000000000000000000000000000000000000..f97bc9e056b024456c8e6f99aaeeecf44f08f97b
+--- /dev/null
++++ b/admin-panel/translations/zh.json
+@@ -0,0 +1,298 @@
++{
++  "layout": {
++    "configLoadFailed": "无法加载管理后台配置。请重试，若您的权限已变更，请退出后重新登录。",
++    "retry": "重试",
++    "blocked": "仅超级管理员可访问此应用。",
++    "brand": "NAccount",
++    "logout": "退出登录",
++    "users": "用户",
++    "userAttributes": "用户属性",
++    "roles": "角色",
++    "apps": "应用",
++    "scopes": "权限范围",
++    "orgs": "组织",
++    "logs": "日志",
++    "samlSso": "SAML",
++    "dashboard": "仪表盘",
++    "account": "账户"
++  },
++  "account": {
++    "updateInfo": "更新信息",
++    "changePassword": "修改密码",
++    "changeEmail": "修改邮箱",
++    "resetMfa": "重置 MFA",
++    "managePasskey": "管理通行密钥",
++    "manageRecoveryCode": "管理恢复码"
++  },
++  "common": {
++    "enable": "启用",
++    "disable": "禁用",
++    "disabled": "已禁用",
++    "active": "已启用",
++    "inviting": "邀请中",
++    "property": "属性",
++    "value": "值",
++    "createdAt": "创建时间",
++    "updatedAt": "更新时间",
++    "create": "创建",
++    "options": "选项：",
++    "save": "保存",
++    "delete": "删除",
++    "system": "系统",
++    "note": "备注",
++    "previous": "上一页",
++    "next": "下一页",
++    "status": "状态",
++    "fieldIsRequired": "此字段为必填项。",
++    "deleteConfirm": "确定要删除 {item} 吗？",
++    "deleteConfirmBtn": "删除",
++    "cancel": "取消",
++    "close": "关闭"
++  },
++  "dashboard": {
++    "informationConfigs": "基本信息配置",
++    "localeConfigs": "多语言配置",
++    "suppressionConfigs": "功能开关配置",
++    "mfaConfigs": "多因素认证 (MFA) 配置",
++    "authConfigs": "认证与令牌配置",
++    "bruteForceConfigs": "防暴力破解配置",
++    "ssoConfigs": "单点登录 (SSO) 配置",
++    "logConfigs": "日志配置",
++    "configName": "配置项",
++    "configValue": "配置值",
++    "configSeconds": "秒",
++    "links": "系统链接",
++    "apiSwagger": "S2S API Swagger",
++    "embeddedSwagger": "嵌入式 API Swagger"
++  },
++  "apps": {
++    "title": "应用",
++    "app": "应用",
++    "error": "错误",
++    "info": "提示",
++    "warning": "警告",
++    "success": "成功",
++    "appBanners": "应用横幅",
++    "appBanner": "应用横幅",
++    "bannerApps": "在所选应用中展示横幅",
++    "newBanner": "创建横幅",
++    "bannerText": "横幅内容",
++    "bannerType": "横幅类型",
++    "bannerStatus": "横幅状态",
++    "bannerLocales": "横幅多语言文案",
++    "bannerLocalesNote": "将显示在用户登录页面。若未填写对应语言文案，将默认显示“横幅内容”。",
++    "new": "创建应用",
++    "clientId": "客户端 ID (Client ID)",
++    "clientSecret": "客户端密钥 (Client Secret)",
++    "name": "名称",
++    "status": "状态",
++    "type": "类型",
++    "scopes": "权限范围",
++    "redirectUris": "回调地址 (Redirect URIs)",
++    "urlFormat": "* 请提供包含协议的完整 URL",
++    "secretNote": "请妥善保存此密钥，关闭后将无法再次查看。",
++    "appLevelMfa": "应用级 MFA",
++    "useSystemMfaConfig": "使用系统全局 MFA 配置",
++    "requireEmailMfa": "强制启用邮箱 MFA",
++    "requireOtpMfa": "强制启用动态口令 (OTP) MFA",
++    "requireSmsMfa": "强制启用短信 MFA",
++    "allowEmailMfaAsBackup": "允许使用邮箱 MFA 作为备用验证",
++    "appLevelMfaDescription": "无论下方设置如何，已主动绑定 MFA 方式的用户在登录此应用时仍需完成相应的 MFA 验证。"
++  },
++  "users": {
++    "title": "用户",
++    "social": "社交账号登录",
++    "search": "按姓名或邮箱搜索",
++    "user": "用户",
++    "authId": "认证 ID (Auth ID)",
++    "email": "邮箱",
++    "name": "姓名",
++    "locale": "语言",
++    "status": "状态",
++    "linkedWith": "已关联账号",
++    "unlink": "解除关联",
++    "unlinkTitle": "确定要解除这些账号的关联吗？",
++    "loginCount": "登录次数",
++    "emailVerified": "邮箱已验证",
++    "emailNotVerified": "邮箱未验证",
++    "emailMfaEnrolled": "邮箱 MFA 已启用",
++    "otpMfaEnrolled": "动态口令 (OTP) MFA 已启用",
++    "otpMfaVerified": "动态口令 (OTP) MFA 已验证",
++    "smsMfaEnrolled": "短信 MFA 已启用",
++    "smsMfaVerified": "短信 MFA 已验证",
++    "resetEmailMfaTitle": "确定要重置邮箱 MFA 吗？",
++    "resetSmsMfaTitle": "确定要重置短信 MFA 吗？",
++    "resetOtpMfaTitle": "确定要重置动态口令 (OTP) MFA 吗？",
++    "resetMfa": "重置 MFA",
++    "enrollMfa": "启用 MFA",
++    "otpMfa": "动态口令 (OTP) MFA",
++    "smsMfa": "短信 MFA",
++    "firstName": "名",
++    "lastName": "姓",
++    "org": "当前活跃组织",
++    "roles": "角色",
++    "resend": "重发验证邮件",
++    "sent": "验证邮件已发送",
++    "you": "当前账号",
++    "consented": "已授权应用",
++    "revokeConsent": "撤销授权",
++    "confirmRevoke": "确定要撤销当前用户对 {item} 的授权吗？",
++    "noConsented": "暂无已授权的应用。",
++    "noIP": "暂无锁定 IP",
++    "lockedIPs": "已锁定 IP",
++    "unlock": "全部解锁",
++    "passkey": "通行密钥 (Passkey)",
++    "passkeyEnrolled": "已绑定通行密钥",
++    "removePasskey": "移除",
++    "removePasskeyTitle": "确定要移除此通行密钥吗？",
++    "noUsers": "未找到用户",
++    "impersonate": "模拟登录",
++    "impersonateTitle": "模拟登录为 {user}",
++    "impersonateApp": "选择应用",
++    "impersonateToken": "模拟登录刷新令牌 (refresh_token)",
++    "impersonateTokenDesc": "此刷新令牌可用于模拟该用户身份，有效期为 30 分钟。您可以使用此刷新令牌换取代表被模拟用户的访问令牌，令牌载荷中将包含 'impersonatedBy' 字段以标识执行模拟操作的管理员。",
++    "impersonateDirect": "如果您的应用集成了官方 SDK，可通过以下链接直接以该用户身份进入应用",
++    "impersonateConsent": "该用户尚未授权此应用",
++    "confirmImpersonate": "确认模拟登录",
++    "closeImpersonate": "关闭",
++    "allOrgs": "所属组织",
++    "manageUserOrgs": "管理用户所属组织",
++    "noOrg": "无活跃组织",
++    "orgGroup": "组织用户组",
++    "manageUserOrgGroup": "管理用户所属组织组",
++    "selectOrgGroups": "选择要分配给该用户的组织用户组",
++    "manageUserAllOrgs": "管理用户所属组织",
++    "selectUserOrgs": "选择要分配给该用户的组织",
++    "uniqueAttribute": "* 唯一属性",
++    "activeSessions": "活跃会话",
++    "activeSessionsNote": "撤销会话将使其刷新令牌失效。若启用了服务端会话，用户仍可能自动重新认证并获取新令牌。如需彻底禁止访问，请将用户状态设为“已禁用”。",
++    "noActiveSessions": "暂无活跃会话。",
++    "sessionApp": "应用",
++    "sessionScope": "权限范围",
++    "sessionRoles": "角色",
++    "sessionExpiredAt": "过期时间",
++    "revokeSession": "撤销",
++    "inviteStatus": "邀请状态",
++    "inviteExpired": "邀请已过期",
++    "inviteExpiresAt": "过期时间",
++    "resendInvite": "重发邀请",
++    "revokeInvite": "撤销邀请",
++    "revokeInviteTitle": "确定要撤销此邀请吗？",
++    "inviteSent": "邀请已发送",
++    "invite": "邀请用户",
++    "inviteUser": "邀请用户",
++    "sendInvite": "发送邀请",
++    "inviteRedirectApp": "跳转应用",
++    "inviteRedirectUrl": "跳转地址",
++    "inviteRedirectDesc": "可选：选择一个应用及其回调地址。受邀用户设置密码后，将自动跳转至该地址直接登录。",
++    "noApp": "不指定应用"
++  },
++  "userAttributes": {
++    "title": "用户属性",
++    "name": "名称",
++    "includeInSignUpForm": "包含在注册表单中",
++    "requiredInSignUpForm": "在注册表单中必填",
++    "requiredAttributeNote": "* 系统不会在数据库表结构层施加非空约束，也不会校验数据库中已存的历史数据。",
++    "includeInIdTokenBody": "包含在 ID Token 载荷中",
++    "includeInUserInfo": "包含在 UserInfo 接口返回中",
++    "uniqueAttribute": "唯一约束",
++    "uniqueAttributeNote": "* 系统不会在数据库表结构层施加唯一约束，也不会校验数据库中已存的历史数据。",
++    "new": "创建用户属性",
++    "userAttribute": "用户属性",
++    "localeNote": "若对应语言显示名称为空，将默认显示属性名称",
++    "locales": "多语言显示名称",
++    "validation": "格式校验",
++    "validationPlaceholder": "在此输入 JavaScript 正则表达式",
++    "validationLocales": "校验提示多语言文案",
++    "validationLocaleNote": "将在用户注册页面作为校验提示信息展示",
++    "invalidRegex": "无效的正则表达式。"
++  },
++  "roles": {
++    "title": "角色",
++    "role": "角色",
++    "name": "名称",
++    "status": "状态",
++    "new": "创建角色",
++    "users": "拥有此角色的用户"
++  },
++  "saml": {
++    "title": "SAML",
++    "idp": "身份提供商 (IDP)",
++    "name": "名称",
++    "isActive": "启用状态",
++    "status": "状态",
++    "new": "创建 SAML IDP",
++    "userIdAttribute": "用户 ID 属性名",
++    "emailAttribute": "邮箱属性名",
++    "firstNameAttribute": "名 (First Name) 属性名",
++    "lastNameAttribute": "姓 (Last Name) 属性名",
++    "metadata": "元数据 XML（不支持 authnRequestsSigned）"
++  },
++  "scopes": {
++    "title": "权限范围",
++    "scope": "权限范围",
++    "name": "名称",
++    "status": "状态",
++    "type": "客户端类型",
++    "new": "创建权限范围",
++    "locales": "多语言说明",
++    "localeNote": "将显示在用户的应用授权确认页面。"
++  },
++  "orgs": {
++    "title": "组织",
++    "org": "组织",
++    "users": "当前活跃于此组织的用户",
++    "allUsers": "此组织的全部用户",
++    "viewAllUsers": "查看此组织的全部用户",
++    "viewActiveUsers": "查看当前活跃于此组织的用户",
++    "name": "名称",
++    "slug": "标识 (Slug)",
++    "status": "状态",
++    "new": "创建组织",
++    "companyLogoUrl": "品牌 Logo 地址",
++    "companyEmailLogoUrl": "邮件 Logo 地址",
++    "fontFamily": "字体族 (Font Family)",
++    "fontUrl": "字体文件地址 (Font URL)",
++    "layoutColor": "页面背景色",
++    "labelColor": "文本标签色",
++    "primaryButtonColor": "主按钮颜色",
++    "primaryButtonLabelColor": "主按钮文字颜色",
++    "primaryButtonBorderColor": "主按钮边框颜色",
++    "secondaryButtonColor": "次按钮颜色",
++    "secondaryButtonLabelColor": "次按钮文字颜色",
++    "secondaryButtonBorderColor": "次按钮边框颜色",
++    "criticalIndicatorColor": "危险/错误指示色",
++    "termsLink": "服务条款链接",
++    "privacyPolicyLink": "隐私政策链接",
++    "allowPublicRegistration": "允许公开注册",
++    "onlyUseForBrandingOverride": "仅用于品牌样式覆盖（用户注册后不会自动加入此组织）"
++  },
++  "orgGroups": {
++    "new": "创建组织用户组",
++    "update": "更新组织用户组",
++    "name": "名称",
++    "cancel": "取消",
++    "groups": "用户组：",
++    "noGroups": "暂无用户组。"
++  },
++  "logs": {
++    "title": "日志",
++    "receiver": "接收方",
++    "success": "是否成功",
++    "time": "时间",
++    "emailLogs": "邮件日志",
++    "smsLogs": "短信日志",
++    "signInLogs": "登录日志",
++    "emailLog": "邮件日志",
++    "smsLog": "短信日志",
++    "signInLog": "登录日志",
++    "userId": "用户 ID",
++    "response": "响应结果",
++    "content": "内容",
++    "ip": "IP 地址",
++    "detail": "详情",
++    "clean": "清理日志",
++    "cleanAlertTitle": "清理早于 {days} 天的历史日志",
++    "cleanAlertDescription": "此操作不可恢复，请在继续前确认已完成必要的数据备份。"
++  }
++}

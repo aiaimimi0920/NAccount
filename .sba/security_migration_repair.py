@@ -93,15 +93,8 @@ def execute(request, settings, root, on_stage, configure_admin, readiness):
     repair.require(len(lifecycle.query(settings, "SELECT name FROM sqlite_master WHERE type='trigger' AND name='naccount_security_apply'")) == 1)
     repair.require(repair.key_witness(settings) == keys)
     deploy.publish(server, migrate=False, portal_read_only=True)
-    previous_secret = os.environ.get('SERVER_CLIENT_SECRET')
-    try:
-        os.environ['SERVER_CLIENT_SECRET'] = secret
+    with deploy.temporary_secret('SERVER_CLIENT_SECRET', secret):
         on_stage('admin-publish', True); deploy.publish(admin, migrate=False)
-    finally:
-        if previous_secret is None:
-            os.environ.pop('SERVER_CLIENT_SECRET', None)
-        else:
-            os.environ['SERVER_CLIENT_SECRET'] = previous_secret
     on_stage('preservation', True)
     lifecycle.prove_rows(settings, snapshot['witness'])
     repair.require(repair.key_witness(settings) == keys)

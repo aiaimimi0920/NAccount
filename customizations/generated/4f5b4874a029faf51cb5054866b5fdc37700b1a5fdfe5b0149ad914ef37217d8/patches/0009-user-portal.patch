@@ -1,0 +1,387 @@
+From 0ea7490805cb7916dfe20dcc1e0dbd97dc74e410 Mon Sep 17 00:00:00 2001
+From: aiaimimi0920 <153103332+aiaimimi0920@users.noreply.github.com>
+Date: Thu, 22 Oct 2026 23:32:58 +0800
+Subject: [PATCH] NA-13: remove redundant authentication and portal round trips
+
+NAccount-Patch-Topic: user-portal
+---
+ .../__tests__/normal/account-latency.test.ts  | 58 ++++++++++++++++
+ .../__tests__/normal/request-latency.test.ts  | 66 +++++++++++++++++++
+ server/src/configs/type.ts                    |  1 +
+ server/src/middlewares/setup.ts               | 19 +++++-
+ server/src/router.tsx                         |  2 +
+ server/src/services/accountProfile.ts         | 28 ++++----
+ server/src/services/accountSocial.ts          |  7 +-
+ server/src/services/email.tsx                 |  5 +-
+ server/src/services/jwt.ts                    |  5 +-
+ server/src/utils/timing.test.ts               | 19 ++++++
+ server/src/utils/timing.ts                    | 12 ++++
+ 11 files changed, 200 insertions(+), 22 deletions(-)
+ create mode 100644 server/src/__tests__/normal/account-latency.test.ts
+ create mode 100644 server/src/__tests__/normal/request-latency.test.ts
+ create mode 100644 server/src/utils/timing.test.ts
+ create mode 100644 server/src/utils/timing.ts
+
+diff --git a/server/src/__tests__/normal/account-latency.test.ts b/server/src/__tests__/normal/account-latency.test.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..0816c13b11c0cc9090e0ece51fcce28919d35a74
+--- /dev/null
++++ b/server/src/__tests__/normal/account-latency.test.ts
+@@ -0,0 +1,58 @@
++import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
++import { Context } from 'hono'
++import { ClientType } from '@melody-auth/shared'
++import { Database } from 'better-sqlite3'
++import { migrate, mock } from 'tests/mock'
++import { jwtService } from 'services'
++import { userModel } from 'models'
++import { typeConfig } from 'configs'
++import { timeUtil } from 'utils'
++import account from 'routes/account'
++
++let db: Database
++let env: typeConfig.Bindings
++let token: string
++beforeEach(async () => {
++  db = await migrate()
++  db.prepare("INSERT INTO user(authId,email,otpSecret) VALUES('budget-user','budget@example.test','')").run()
++  db.prepare('UPDATE app SET redirectUris=? WHERE clientId=?').run('https://auth.example.test/account', 'naccount-user-portal')
++  env = { ...process.env, ...mock(db), AUTH_SERVER_URL: 'https://auth.example.test',
++    NACCOUNT_PORTAL_CLIENT_ID: 'naccount-user-portal', PG_CONNECTION_STRING: '' } as unknown as typeConfig.Bindings
++  const context = new Context(new Request('https://auth.example.test'), { env })
++  token = (await jwtService.genAccessToken(context, ClientType.SPA, timeUtil.getCurrentTimestamp(),
++    'budget-user', 'naccount-user-portal', 'openid profile')).accessToken
++})
++afterEach(() => { db.close(); vi.restoreAllMocks() })
++const get = (path = '/account/api/profile') => account.request(path, { headers: { Authorization: 'Bearer ' + token } }, env)
++
++describe('authenticated portal round-trip budget', () => {
++  it('checks the current user exactly once per profile request, not twice', async () => {
++    const reads = vi.spyOn(userModel, 'getByAuthId')
++    expect((await get()).status).toBe(200)
++    expect(reads).toHaveBeenCalledTimes(1)
++    expect((await get()).status).toBe(200)
++    expect(reads).toHaveBeenCalledTimes(2)
++  })
++
++  it.each(['version', 'disabled', 'deleted'])('does not cache the user across requests after %s changes', async (kind) => {
++    expect((await get()).status).toBe(200)
++    if (kind === 'version') db.prepare('UPDATE user SET securityVersion=securityVersion+1').run()
++    if (kind === 'disabled') db.prepare('UPDATE user SET isActive=0').run()
++    if (kind === 'deleted') db.prepare('UPDATE user SET deletedAt=CURRENT_TIMESTAMP').run()
++    expect((await get()).status).toBe(401)
++  })
++
++  it('loads 100 public apps in one catalogue statement and preserves explicit catalogue order', async () => {
++    const ids = Array.from({ length: 100 }, (_, i) => `budget-${i}`)
++    for (const id of ids) db.prepare('INSERT INTO app(name,type,clientId) VALUES(?,?,?)').run(id, 'spa', id)
++    env.NACCOUNT_PUBLIC_APP_IDS = [...ids].reverse()
++    const reads = vi.spyOn(env.DB, 'prepare')
++    const response = await get('/account/api/apps')
++    expect(response.status).toBe(200)
++    const body = await response.json() as { apps: { clientId: string; authorized: boolean }[] }
++    expect(body.apps.map((entry) => entry.clientId)).toEqual(env.NACCOUNT_PUBLIC_APP_IDS)
++    expect(body.apps.every((entry) => entry.authorized === false)).toBe(true)
++    // Current user, portal client, catalogue. No per-app remote round trips.
++    expect(reads).toHaveBeenCalledTimes(3)
++  })
++})
+diff --git a/server/src/__tests__/normal/request-latency.test.ts b/server/src/__tests__/normal/request-latency.test.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..d2e5d8f1d4fa81709c4b34751e10323298080fe2
+--- /dev/null
++++ b/server/src/__tests__/normal/request-latency.test.ts
+@@ -0,0 +1,66 @@
++import { afterEach, describe, expect, it, vi } from 'vitest'
++import { Hono } from 'hono'
++import { typeConfig, routeConfig } from 'configs'
++import { session } from 'middlewares/setup'
++import { kvService } from 'services'
++
++afterEach(() => vi.restoreAllMocks())
++
++describe('stateless request session budget', () => {
++  it.each([
++    '/', '/account', '/account/', '/account/config', '/account/api/profile', '/account/api/apps',
++    '/.well-known/openid-configuration', '/.well-known/jwks.json',
++    routeConfig.OauthRoute.Token, routeConfig.OauthRoute.Userinfo, routeConfig.OauthRoute.Revoke,
++    routeConfig.IdentityRoute.AuthorizeView, routeConfig.IdentityRoute.ProcessView,
++    routeConfig.IdentityRoute.SendEmailMfa, routeConfig.IdentityRoute.SendPasswordlessCode,
++    routeConfig.IdentityRoute.ResetPasswordCode, routeConfig.IdentityRoute.ChangeEmailCode,
++    routeConfig.IdentityRoute.ResendSmsMfa,
++  ])('does not read or seal an SSO cookie for %s', async (path) => {
++    const secret = vi.spyOn(kvService, 'getSessionSecret').mockRejectedValue(new Error('unnecessary KV request'))
++    const app = new Hono<typeConfig.Context>()
++    app.use('*', session)
++    app.all('*', (c) => c.text('stateless'))
++    const response = await app.request(path, {}, { SERVER_SESSION_EXPIRES_IN: 1800 } as typeConfig.Bindings)
++    expect(response.status).toBe(200)
++    expect(secret).not.toHaveBeenCalled()
++    expect(response.headers.get('Set-Cookie')).toBeNull()
++  })
++
++  it.each([routeConfig.OauthRoute.Authorize, routeConfig.OauthRoute.Logout,
++    routeConfig.IdentityRoute.Logout, routeConfig.IdentityRoute.AuthorizeAccount,
++    routeConfig.IdentityRoute.AuthorizePassword, routeConfig.IdentityRoute.ProcessEmailMfa,
++    routeConfig.IdentityRoute.ProcessPasswordlessCode, routeConfig.IdentityRoute.ProcessOtpMfa,
++    routeConfig.IdentityRoute.ProcessSmsMfa, '/identity/v1/future-unreviewed-route',
++  ])('still requires the real SSO key for %s', async (path) => {
++    const secret = vi.spyOn(kvService, 'getSessionSecret').mockRejectedValue(new Error('key unavailable'))
++    const app = new Hono<typeConfig.Context>()
++    app.use('*', session)
++    app.all('*', (c) => c.text('session'))
++    const response = await app.request(path, {}, { SERVER_SESSION_EXPIRES_IN: 1800 } as typeConfig.Bindings)
++    expect(response.status).toBe(500)
++    expect(secret).toHaveBeenCalledOnce()
++  })
++
++  it('retains the encrypted SSO cookie through an intervening stateless view', async () => {
++    vi.spyOn(kvService, 'getSessionSecret').mockResolvedValue('test-session-key-with-at-least-32-characters')
++    const app = new Hono<typeConfig.Context>()
++    app.use('*', session)
++    app.get(routeConfig.IdentityRoute.AuthorizeAccount, (c) => {
++      c.get('session').set('authId', 'test-subject')
++      return c.text('signed in')
++    })
++    app.get('/account', (c) => c.text('stateless'))
++    app.get(routeConfig.OauthRoute.Authorize, (c) => c.text(c.get('session').get('authId') as string))
++    const env = { SERVER_SESSION_EXPIRES_IN: 1800 } as typeConfig.Bindings
++    const signedIn = await app.request(routeConfig.IdentityRoute.AuthorizeAccount, {}, env)
++    expect(signedIn.status).toBe(200)
++    // CookieStore emits the initial cookie before persisting the authenticated one.
++    const cookie = signedIn.headers.getSetCookie().at(-1)!.split(';')[0]
++    expect(cookie).toBeTruthy()
++    const view = await app.request('/account', { headers: { Cookie: cookie } }, env)
++    expect(view.headers.get('Set-Cookie')).toBeNull()
++    const authorized = await app.request(routeConfig.OauthRoute.Authorize, { headers: { Cookie: cookie } }, env)
++    expect(authorized.status).toBe(200)
++    expect(await authorized.text()).toBe('test-subject')
++  })
++})
+diff --git a/server/src/configs/type.ts b/server/src/configs/type.ts
+index 8b2f68a4a20796f29c9fa8e3a584e05efe62fba0..4e82e5327aefb0249e76e3417947e422efc9c205 100644
+--- a/server/src/configs/type.ts
++++ b/server/src/configs/type.ts
+@@ -113,6 +113,7 @@ export type Context = {
+   Bindings: Bindings;
+   Variables: {
+     access_token_body?: typeConfig.AccessTokenBody;
++    verified_access_user?: { token: typeConfig.AccessTokenBody; user: userModel.Record };
+     basic_auth_body?: typeConfig.BasicAuthBody;
+     session: Session;
+     session_key_rotation: boolean;
+diff --git a/server/src/middlewares/setup.ts b/server/src/middlewares/setup.ts
+index a0d84c56092ee02bd022950c2542839d29d1a9df..bc74bacb7673d019e0f7d1b45440a29f55095b0a 100644
+--- a/server/src/middlewares/setup.ts
++++ b/server/src/middlewares/setup.ts
+@@ -7,25 +7,38 @@ import {
+   CookieStore, sessionMiddleware,
+ } from 'hono-sessions'
+ import {
+-  errorConfig, messageConfig, typeConfig,
++  errorConfig, messageConfig, typeConfig, routeConfig,
+ } from 'configs'
+ import {
+   loggerUtil, requestUtil,
+ } from 'utils'
+ import { kvService } from 'services'
++import { timed } from 'utils/timing'
+ 
+ const store = new CookieStore()
+ 
++// These handlers use bearer tokens or their own one-time proofs, never the SSO session.
++// New authentication routes outside the token/proof-only account namespace keep the session guard.
++const statelessPaths = new Set<string>([
++  '/', '/account', '/account/',
++  '/.well-known/openid-configuration', '/.well-known/jwks.json',
++  routeConfig.OauthRoute.Token, routeConfig.OauthRoute.Userinfo, routeConfig.OauthRoute.Revoke,
++  routeConfig.IdentityRoute.AuthorizeView, routeConfig.IdentityRoute.ProcessView,
++  routeConfig.IdentityRoute.SendEmailMfa, routeConfig.IdentityRoute.SendPasswordlessCode,
++  routeConfig.IdentityRoute.ResetPasswordCode, routeConfig.IdentityRoute.ChangeEmailCode,
++  routeConfig.IdentityRoute.ResendSmsMfa,
++])
++
+ export const session = async (
+   c: Context<typeConfig.Context>, next: Next,
+ ) => {
+   const { SERVER_SESSION_EXPIRES_IN: expiresIn } = env(c)
+-  if (!expiresIn) {
++  if (!expiresIn || statelessPaths.has(c.req.path) || c.req.path.startsWith('/account/')) {
+     await next()
+     return
+   }
+ 
+-  const secret = await kvService.getSessionSecret(c)
++  const secret = await timed(c, 'session-key', () => kvService.getSessionSecret(c))
+ 
+   const session = sessionMiddleware({
+     store,
+diff --git a/server/src/router.tsx b/server/src/router.tsx
+index e7b3099753d6f679ea844d78aa261d07c70d2080..6c479bedf09aa01dd35f1bf79c3cb874ad53999d 100644
+--- a/server/src/router.tsx
++++ b/server/src/router.tsx
+@@ -12,8 +12,10 @@ import {
+ } from 'configs'
+ import { loggerUtil } from 'utils'
+ import accountRoute from 'routes/account'
++import { timed } from 'utils/timing'
+ 
+ export const loadRouters = (app: Hono<typeConfig.Context>) => {
++  app.use('/*', (c, next) => timed(c, 'app', next))
+   app.use(
+     '/*',
+     async (
+diff --git a/server/src/services/accountProfile.ts b/server/src/services/accountProfile.ts
+index 3c482a5ed8abc35fbabecf2a0beba26f01f0a38b..a98ec2c85aa91779ec4b404768374412daef0b24 100644
+--- a/server/src/services/accountProfile.ts
++++ b/server/src/services/accountProfile.ts
+@@ -2,7 +2,6 @@ import { Context } from 'hono'
+ import { HTTPException } from 'hono/http-exception'
+ import { ClientType } from '@melody-auth/shared'
+ import { errorConfig, typeConfig } from 'configs'
+-import { appModel, userAppConsentModel } from 'models'
+ import { actor } from './accountSocial'
+ 
+ interface Card { nickname: string; signature: string; phone: string | null }
+@@ -44,19 +43,20 @@ export const update = async (c: Context<typeConfig.Context>) => {
+ 
+ export const apps = async (c: Context<typeConfig.Context>) => {
+   const user = await actor(c)
+-  const consents = await userAppConsentModel.getAllByUser(c.env.DB, user.id)
+-  const entries = new Map<string, { clientId: string; name: string; authorized: boolean }>()
+-  const add = (app: appModel.Record | null, authorized: boolean) => {
+-    if (!app || !app.isActive || app.deletedAt || app.type !== ClientType.SPA || app.clientId === c.env.NACCOUNT_PORTAL_CLIENT_ID) return
+-    entries.set(app.clientId, { clientId: app.clientId, name: app.name, authorized: authorized || entries.get(app.clientId)?.authorized || false })
+-  }
+-  for (const consent of consents) add(await appModel.getById(c.env.DB, consent.appId), true)
+   // Own consent is private to this user. Additional discovery is opt-in, never a global app dump.
+   const catalogue = c.env.NACCOUNT_PUBLIC_APP_IDS
+-  if (Array.isArray(catalogue)) {
+-    for (const clientId of catalogue.slice(0, 100)) {
+-      if (typeof clientId === 'string') add(await appModel.getByClientId(c.env.DB, clientId), false)
+-    }
+-  }
+-  return c.json({ apps: [...entries.values()] })
++  const publicIds = Array.isArray(catalogue) ? catalogue.slice(0, 100).filter((id): id is string => typeof id === 'string') : []
++  // One parameterized D1 query instead of one network round trip per app. JSON keeps the
++  // 100-entry catalogue below D1's statement parameter limit; it is data, not SQL text.
++  const { results } = await c.env.DB.prepare(`
++    SELECT a.clientId, a.name, MIN(consent.id) AS consentId
++    FROM app a LEFT JOIN user_app_consent consent
++      ON consent.appId=a.id AND consent.userId=$1 AND consent.deletedAt IS NULL
++    LEFT JOIN json_each($2) catalogue ON catalogue.value=a.clientId
++    WHERE a.deletedAt IS NULL AND a.isActive<>0 AND a.type=$3 AND a.clientId<>$4
++      AND (consent.id IS NOT NULL OR catalogue.key IS NOT NULL)
++    GROUP BY a.id ORDER BY consentId IS NULL, consentId, MIN(catalogue.key), a.id
++  `).bind(user.id, JSON.stringify(publicIds), ClientType.SPA, c.env.NACCOUNT_PORTAL_CLIENT_ID!)
++    .all<{ clientId: string; name: string; consentId: number | null }>()
++  return c.json({ apps: results.map(({ clientId, name, consentId }) => ({ clientId, name, authorized: consentId !== null })) })
+ }
+diff --git a/server/src/services/accountSocial.ts b/server/src/services/accountSocial.ts
+index d2ad5b3dae1777af943b830780ad15375139c27c..aa2cc44d804086be217cca9aa471df24ad31f824 100644
+--- a/server/src/services/accountSocial.ts
++++ b/server/src/services/accountSocial.ts
+@@ -34,8 +34,11 @@ export const actor = async (c: Context<typeConfig.Context>) => {
+   if (c.env.PG_CONNECTION_STRING) throw denied()
+   const token = c.get('access_token_body')
+   if (!token || !token.sub || token.impersonatedBy || !token.scope.split(' ').includes('profile')) throw denied()
+-  await portalClient(c, token.azp)
+-  const user = await userModel.getByAuthId(c.env.DB, token.sub)
++  const verified = c.get('verified_access_user')
++  const [, user] = await Promise.all([
++    portalClient(c, token.azp),
++    verified?.token === token ? verified.user : userModel.getByAuthId(c.env.DB, token.sub),
++  ])
+   if (!user || !user.isActive || user.deletedAt || (user.securityVersion ?? 0) !== (token.securityVersion ?? 0)) throw denied()
+   return user
+ }
+diff --git a/server/src/services/email.tsx b/server/src/services/email.tsx
+index a36252ec3b414ac01ae1c578f90a405bd72e708d..a54e5dd8c175c5cd618ecff095f6555c4574f0b2 100644
+--- a/server/src/services/email.tsx
++++ b/server/src/services/email.tsx
+@@ -29,6 +29,7 @@ import {
+   localeConfig, messageConfig, typeConfig,
+ } from 'configs'
+ import { systemConfig } from 'configs/variable'
++import { timed } from 'utils/timing'
+ 
+ const checkEmailSetup = (c: Context<typeConfig.Context>) => {
+   if (env(c).EMAIL_PROVIDER_NAME === 'cloudflare') {
+@@ -137,9 +138,9 @@ export const sendEmail = async (
+ 
+   const mailer = buildMailer(c)
+ 
+-  const res = await mailer.sendEmail({
++  const res = await timed(c, 'email-provider', () => mailer.sendEmail({
+     senderName, content: emailBody, email: receiver, subject,
+-  })
++  }))
+ 
+   if (mailer instanceof SmtpMailer) {
+     success = res?.accepted[0] === receiver
+diff --git a/server/src/services/jwt.ts b/server/src/services/jwt.ts
+index 01fc434dba572801e17cc40c904ba2a3bc6a327f..b502615878c986b4b3c9c57fe6017f17da0ed879 100644
+--- a/server/src/services/jwt.ts
++++ b/server/src/services/jwt.ts
+@@ -114,6 +114,7 @@ export const getAccessTokenBody = async (
+   context: Context<typeConfig.Context>,
+   accessToken: string,
+ ) => {
++  context.set('verified_access_user', undefined)
+   const decoded = decode(accessToken)
+   const header = decoded.header as unknown as { kid: string }
+ 
+@@ -163,7 +164,9 @@ export const getAccessTokenBody = async (
+   }
+ 
+   if (accessTokenBody.tokenType !== 'service') {
+-    await freshUser(context, { authId: accessTokenBody.sub, securityVersion: accessTokenBody.securityVersion })
++    const user = await freshUser(context, { authId: accessTokenBody.sub, securityVersion: accessTokenBody.securityVersion })
++    // Request-local only, bound to this exact verified token object. Never reuse across requests.
++    context.set('verified_access_user', { token: accessTokenBody, user })
+   }
+   return accessTokenBody
+ }
+diff --git a/server/src/utils/timing.test.ts b/server/src/utils/timing.test.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..997a7c1dfd637fb6be5a309570c9420ac6a46a12
+--- /dev/null
++++ b/server/src/utils/timing.test.ts
+@@ -0,0 +1,19 @@
++import { describe, expect, it } from 'vitest'
++import { Hono } from 'hono'
++import { typeConfig } from 'configs'
++import { timed } from './timing'
++
++describe('safe timing headers', () => {
++  it('preserves the response and appends fixed numeric stage names only', async () => {
++    const app = new Hono<typeConfig.Context>()
++    app.use('*', (c, next) => timed(c, 'app', next))
++    app.get('*', async (c) => {
++      await timed(c, 'email-provider', () => ({ messageId: 'private-provider-id', code: '123456' }))
++      return c.json({ success: true })
++    })
++    const response = await app.request('/?private=do-not-log')
++    expect(await response.json()).toEqual({ success: true })
++    expect(response.headers.get('Server-Timing')).toMatch(/^email-provider;dur=\d+\.\d, app;dur=\d+\.\d$/)
++    expect(response.headers.get('Server-Timing')).not.toMatch(/private|123456/)
++  })
++})
+diff --git a/server/src/utils/timing.ts b/server/src/utils/timing.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..7ab34486ebbc0de9db354b9dacc44533744801b2
+--- /dev/null
++++ b/server/src/utils/timing.ts
+@@ -0,0 +1,12 @@
++import { Context } from 'hono'
++import { typeConfig } from 'configs'
++
++// Fixed names and numeric durations only: never put request data or provider responses here.
++export async function timed<T>(c: Context<typeConfig.Context>, name: 'app' | 'session-key' | 'email-provider', operation: () => T | Promise<T>): Promise<T> {
++  const started = performance.now()
++  try {
++    return await operation()
++  } finally {
++    c.header('Server-Timing', `${name};dur=${Math.max(0, performance.now() - started).toFixed(1)}`, { append: true })
++  }
++}

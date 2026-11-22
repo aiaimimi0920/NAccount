@@ -122,6 +122,14 @@ def export_snapshot(settings, directory: Path):
     raise StackError('D1 export timed out; do not replay mutations')
 
 
+TRANSIENT_TABLES = {
+    'naccount_security_limit',
+    'naccount_otp_use',
+    'naccount_security_request',
+    'naccount_link_request',
+}
+
+
 def sql_name(value):
     require(isinstance(value, str) and re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*', value))
     return '"' + value + '"'
@@ -140,6 +148,8 @@ def snapshot_witness(path):
         require(not db.execute('PRAGMA foreign_key_check').fetchall(), 'Invalid snapshot relationships')
         witness = {}
         for (table,) in db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '_cf_%' AND name!='d1_migrations'").fetchall():
+            if table in TRANSIENT_TABLES:
+                continue
             columns = [r[1] for r in db.execute('PRAGMA table_info(' + sql_name(table) + ')')]
             rows = db.execute('SELECT ' + ','.join(map(sql_name, columns)) + ' FROM ' + sql_name(table)).fetchall()
             witness[table] = {'columns': columns, 'rows': sorted(row_digest(row) for row in rows)}
@@ -150,9 +160,42 @@ def snapshot_witness(path):
 
 
 def query(settings, sql, params=None):
-    result = deploy.cloud_api(settings, f"/d1/database/{settings['database']['id']}/query", method='POST', payload={'sql': sql, 'params': params or []})
-    require(isinstance(result, list) and len(result) == 1 and result[0].get('success') is True, 'D1 query unconfirmed')
-    return result[0]['results']
+    return deploy.d1_query(settings, sql, params, error='D1 query unconfirmed')
+
+
+def fetch_table_digests(query_fn, settings, table, columns, *, max_rows=100000, max_json_bytes=None,
+                        overflow_error='Data verification exceeds bounded row count'):
+    quoted_table = sql_name(table)
+    projected = ','.join(map(sql_name, columns))
+    can_keyset = not any(col.lower() in ('rowid', '_rowid_', 'oid') for col in columns)
+    hashes = []
+    json_size = 0
+    cursor = None
+    for page in range(max_rows // 500 + 1):
+        if can_keyset:
+            try:
+                if cursor is None:
+                    rows = query_fn(settings, f'SELECT rowid AS "__naccount_rowid__", {projected} FROM {quoted_table} ORDER BY rowid LIMIT 500')
+                else:
+                    rows = query_fn(settings, f'SELECT rowid AS "__naccount_rowid__", {projected} FROM {quoted_table} WHERE rowid > ? ORDER BY rowid LIMIT 500', [cursor])
+            except (sqlite3.OperationalError, StackError):
+                if page == 0:
+                    can_keyset = False
+                else:
+                    raise
+        if not can_keyset:
+            rows = query_fn(settings, f'SELECT {projected} FROM {quoted_table} LIMIT 500 OFFSET ?', [page * 500])
+        if max_json_bytes is not None:
+            clean_rows = [{col: row[col] for col in columns} for row in rows]
+            json_size += len(json.dumps(clean_rows).encode())
+            require(json_size <= max_json_bytes, overflow_error)
+        hashes.extend(row_digest([row[column] for column in columns]) for row in rows)
+        require(len(hashes) <= max_rows, overflow_error)
+        if len(rows) < 500:
+            return hashes
+        if can_keyset:
+            cursor = rows[-1]['__naccount_rowid__']
+    raise StackError(overflow_error)
 
 
 def prove_rows(settings, witness, *, exact=False):
@@ -160,18 +203,12 @@ def prove_rows(settings, witness, *, exact=False):
     from collections import Counter
     if exact:
         tables = query(settings, "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '_cf_%' AND name!='d1_migrations'")
-        require({r['name'] for r in tables} == set(witness), 'Source schema changed during preview')
+        require(({r['name'] for r in tables} - TRANSIENT_TABLES) == set(witness), 'Source schema changed during preview')
     for table, entry in witness.items():
-        columns = entry['columns']; hashes = []
+        columns = entry['columns']
         if exact:
             require([r['name'] for r in query(settings, 'PRAGMA table_info(' + sql_name(table) + ')')] == columns, 'Source columns changed during preview')
-        for offset in range(0, 100001, 500):
-            rows = query(settings, 'SELECT ' + ','.join(map(sql_name, columns)) + ' FROM ' + sql_name(table) + ' ORDER BY rowid LIMIT 500 OFFSET ?', [offset])
-            hashes.extend(row_digest([row[column] for column in columns]) for row in rows)
-            if len(rows) < 500:
-                break
-        else:
-            raise StackError('Data verification exceeds bounded row count')
+        hashes = fetch_table_digests(query, settings, table, columns)
         require(not (Counter(entry['rows']) - Counter(hashes)), 'Existing database rows were changed or lost')
         if exact:
             require(Counter(entry['rows']) == Counter(hashes), 'Source changed during preview; cannot attest unchanged')

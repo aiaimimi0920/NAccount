@@ -12,3 +12,8 @@ NA-15 在既有加载/权限行为之上统一管理后台 Neuro 语义主题与
 风险提示、错误/禁用状态；支持窄屏内滚动、Escape 取消及焦点恢复，重发邀请提交中不允许取消。
 认证页共用同值主题并保留组织显式 branding，同一次 authorize 请求复用已解析 branding，
 不跨请求缓存身份或权限。保护测试覆盖共享 alert-dialog、邀请弹窗和 Layout/authorize。
+
+后续全栈优化补齐管理后台完整简体中文支持：新增 `admin-panel/translations/zh.json`（完整对齐 270 项词条），
+`i18n/routing.ts`、`i18n/request.ts`、`middleware.ts` 与 `.env.example` 开通 `['en', 'fr', 'zh']`，
+修复 `fr.json` 缺失的 5 个 Passkey/组织键；`Setup.tsx` 支持多语言切换下拉与 `zh` 登录回跳，
+并将硬编码外链 `valuemelody.com/logo.svg` 与缺失 favicon 替换为内联 NAccount SVG 标识，消除 `/zh/dashboard` 404。

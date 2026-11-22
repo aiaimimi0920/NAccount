@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import argparse
-from contextlib import nullcontext, redirect_stdout
+from contextlib import contextmanager, nullcontext, redirect_stdout
 import io
 import json
 import os
@@ -23,6 +23,20 @@ from stack import (ROOT, Stack, StackError, contained, encode_json, git_bytes, l
 
 KEY_NAMES = {"sessionSecret", "jwtPublicSecret", "jwtPrivateSecret"}
 EXCLUDED = {"node_modules", ".git", ".next", ".wrangler", "__pycache__"}
+ADMIN_LOCALES = {"en", "fr", "zh"}
+
+
+@contextmanager
+def temporary_secret(name: str, value: str):
+    previous = os.environ.get(name)
+    os.environ[name] = value
+    try:
+        yield
+    finally:
+        if previous is None:
+            os.environ.pop(name, None)
+        else:
+            os.environ[name] = previous
 
 
 def deployment_tools_hash():
@@ -115,20 +129,29 @@ def runtime_config(value: dict, settings: dict, role: str) -> dict:
         value.update(workers_dev=True, routes=[])
     value['compatibility_flags'] = sorted(set(value.get('compatibility_flags', [])) | {'global_fetch_strictly_public'})
     if settings.get('_sbaPreview'):
-        # 预升级配置不继承任何邮件、定时、队列或外部服务通道。
-        for key in ('send_email', 'triggers', 'queues', 'services', 'unsafe', 'durable_objects'):
+        # 预升级配置不继承任何邮件、定时、队列、可观测日志或外部服务通道。
+        for key in ('send_email', 'triggers', 'queues', 'services', 'unsafe', 'durable_objects', 'placement', 'observability'):
             value.pop(key, None)
         original = value['main']
         value['main'] = 'naccount-preview-entry.mjs'
         value['_previewOriginalMain'] = original
+    else:
+        value.setdefault('placement', {'mode': 'smart'})
+        value['observability'] = {'enabled': True}
     return value
+
+
+def admin_locales(settings: dict) -> list[str]:
+    configured = settings.get("vars", {}).get("SUPPORTED_LOCALES", ["en", "fr"])
+    filtered = [locale for locale in configured if isinstance(locale, str) and locale in ADMIN_LOCALES]
+    return filtered or ["en"]
 
 
 def admin_env(settings: dict) -> dict[str, str]:
     return {"NEXT_PUBLIC_CLIENT_URI": settings["admin"]["url"],
             "NEXT_PUBLIC_SERVER_URI": settings["server"]["url"],
             "NEXT_PUBLIC_CLIENT_ID": settings["admin"].get("spaClientId", ""),
-            "NEXT_PUBLIC_SUPPORTED_LOCALES": ",".join(settings.get("vars", {}).get("SUPPORTED_LOCALES", ["en", "fr"])),
+            "NEXT_PUBLIC_SUPPORTED_LOCALES": ",".join(admin_locales(settings)),
             "SERVER_CLIENT_ID": settings["admin"].get("s2sClientId", "")}
 
 
@@ -271,6 +294,14 @@ def cloud_api(settings: dict, suffix: str, *, method: str = "GET", payload=None)
     return result["result"]
 
 
+def d1_query(settings: dict, sql: str, params: list | None = None, *, error: str = "D1 query failed") -> list:
+    response = cloud_api(settings, f"/d1/database/{settings['database']['id']}/query",
+                         method="POST", payload={"sql": sql, "params": params or []})
+    if not isinstance(response, list) or len(response) != 1 or response[0].get("success") is not True:
+        raise StackError(error)
+    return response[0]["results"]
+
+
 def existing_keys(settings: dict) -> set[str]:
     found = set()
     for name in KEY_NAMES:
@@ -327,12 +358,8 @@ def publish(release: Path, *, migrate: bool, portal_read_only: bool = False) -> 
         for role in roles:
             if role == 'server':
                 from portal import configure
-                def query(config, sql, params):
-                    response = cloud_api(config, f"/d1/database/{config['database']['id']}/query", method='POST', payload={'sql': sql, 'params': params})
-                    if not isinstance(response, list) or len(response) != 1 or response[0].get('success') is not True:
-                        raise StackError('Portal D1 query failed')
-                    return response[0]['results']
-                configure(settings, query, preview=bool(settings.get('_sbaPreview')), read_only=portal_read_only)
+                configure(settings, lambda cfg, sql, params: d1_query(cfg, sql, params, error='Portal D1 query failed'),
+                          preview=bool(settings.get('_sbaPreview')), read_only=portal_read_only)
             # Upload application secrets only when explicitly listed. JWT/session keys are not touched.
             if secrets[role]:
                 wrangler(source, role, ["secret", "bulk"], settings, secret_input=encode_json(secrets[role]), cloud=True)

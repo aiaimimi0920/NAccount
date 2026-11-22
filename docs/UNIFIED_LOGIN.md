@@ -96,40 +96,33 @@ async function startLogin(screen) {
    最长 10 分钟有效期（拒绝异常未来时间）。校验成功或确定失败后消费本地交易，禁止重复处理。
    用 `history.replaceState` 去掉回调中的 code/state/error，避免进入日志和后续 referrer。
 3. 向 `${issuer}/oauth2/v1/token` POST `application/x-www-form-urlencoded`：
-   `grant_type=authorization_code&code=...&code_verifier=...`。当前服务端绑定的是授权码中保存的
-   client/redirect 与 PKCE；**当前 token handler 不另外校验请求体中的 client_id/redirect_uri**，
-   不能靠多传这两个字段代替前述客户端交易校验。超时/失败展示明确结果，不自动重放兑换。
-4. 用户 API 使用 Access Token，不使用 ID Token 充当 bearer。可请求
-   `${issuer}/oauth2/v1/userinfo` 做在线身份/撤销检查；当前 DTO 使用 `authId`，不要假定返回 `sub`。
+   `grant_type=authorization_code&code=...&code_verifier=...`。服务端除校验授权码与 PKCE 外，
+   当请求体传入 `client_id` 或 `redirect_uri` 时也会与授权请求精确比对（不一致即拒绝），
+   同时保留不传这两个可选字段的既有客户端兼容。客户端仍须完成本地 `state`/交易核验。
+4. 用户 API 使用 Access Token（支持 `GET` 与 `POST` `${issuer}/oauth2/v1/userinfo`），不使用 ID Token 充当 bearer。
+   `userinfo` 同时返回标准 `sub` 与兼容字段 `authId`，并在用户配置门户资料后透出 `nickname`、
+   `preferred_username`、`signature`、`phone_number`；`id_token` 同步包含 `nickname` 与 `name`。
    不验证签名就 decode ID Token 不能建立可信业务会话。
 5. 优先由应用后端/BFF 保存 refresh token 并建立安全 Cookie 会话；纯 SPA 至少避免把 token
    写入 URL、日志或任意第三方 storage。对 refresh 的并发、失败、退出和撤销建立明确状态机。
-6. 退出需要区分应用自己的会话、refresh token 撤销与 NAccount 当前 client 的 SSO logout。
+6. 退出需要区分应用自己的会话、refresh token 撤销与 NAccount SSO logout（Discovery 已暴露
+   `end_session_endpoint`，`/oauth2/v1/logout` 会同时清理当前应用与跨应用主 SSO 会话并原样回传 `state`）。
    外部服务仅离线验 JWT 时，不能保证 NAccount 停用账号后它的既有会话立即失效。
 
 新接入优先使用整页跳转/系统浏览器。不要直接搬运用户中心专用 `AuthDialog`：它绑定门户
 storage key、profile API 与取消生命周期。若应用另做 popup，必须同时校验消息 `origin`、
 `source`、state 和在途交易；上游 SDK 的 popup 路径未在本轮做完整安全加固或重新发布。
 
-### 现有兼容限制
+### 跨应用 SSO、回调大小写与自定义 Scheme 契约
 
-- 现有 DTO 会把回调 URI 整体转小写，注册存储也有自身规范化；本轮没有改动这项旧协议。
-  不应登记大小写敏感 path/query 并期望原字节保持，应单独迁移并回归后再扩展。
-- 注册数据库中的相对 URI/custom scheme 不会仅因新增“显示返回地址”而变成 500；但完整浏览器
-  认证完成路径只接受现有 HTTP(S) 回调，这不是新增 native scheme 支持。
+- **跨应用共享主身份 SSO**：用户在任一 SPA 登录成功后建立受 `securityVersion` 与活动状态保护的主身份会话。切换到另一已登记 SPA 时，若新应用未开启独立强制 App-MFA，服务端会自动检查该应用的 `user_app_consent`（未授权跳 Consent 确认页，已授权直接签发该应用的授权码），无需重复输入密码；同时支持标准 OIDC `prompt=none` 静默探测与浏览器错误回跳。
+- **回调大小写与自定义 Scheme**：DTO 规范化仅将 `redirect_uri` 的 scheme 与 host 转为小写，完整保留路径与查询参数大小写；前端 `parseRedirectUri` 除 `http(s)://` 外安全放行显式双斜杠原生应用回调（如 `midot://auth/callback`），严格拦截 `javascript:`/`data:`/`vbscript:` 等脚本伪协议。
 - 回调自带查询参数、state 含保留字符时，普通页面完成与 SSO 直接返回均使用 URL 参数合并，
   不再拼接第二个 `?` 或把 state 中的 `&/#` 当成其他参数。
 
-## 本轮性能处理与保留边界
+## 性能与前端拆包边界
 
 - `/login` 无会话时在同一已验证请求中渲染，少一次跳转、一次 client/scope 校验；旧 OIDC 入口兼容保留。
-- Access Token 和 ID Token 在同一请求复用一次签名材料 Promise；私钥、公钥各读取一次，
-  私钥导入与公钥转换各一次。下一请求仍重新读 KV，失败不在同请求内自动重试；不缓存用户权限。
-- JWKS 的 current/deprecated key 读取并行，输出顺序保持 current-first，缺当前密钥仍失败关闭。
-- 默认认证字体改用本地 system-ui，不依赖 Google Fonts stylesheet；组织显式自定义字体保留。
-- process/verify-email/expired 页面复用本请求已解析的 branding，不再为 HTML 再读一次组织。
-- 认证 HTML 使用 `Cache-Control: no-store` 与 `Referrer-Policy: no-referrer`。
-
-没有放宽 MFA、限流、密码验证、回调白名单或撤销语义；没有跨请求缓存 JWKS/账号/权限，
-没有修改生产网络、DNS、Cloudflare 策略、provider 或邮件投递。前端当前仍是共享大 bundle，
-本轮不冒险同时重构 Worker/Node 静态资产与 AuthDialog 异步生命周期。
+- Access Token 和 ID Token 在同一请求复用一次签名材料 Promise；Bearer 验签单次导入 `CryptoKey` 并校核 `kid`；Google JWKS 证书采用 5 分钟进程内短缓存。不跨请求缓存用户权限或 `securityVersion`。
+- 密码哈希升级为原生异步 WebCrypto `PBKDF2-SHA256`（存量 bcrypt 账号在登录成功后无感平滑升级），消除 Worker 同步 CPU 阻塞。
+- 前端 Vite 客户端开启 ES Module 按需代码分割（`client.js` 入口按路径动态加载 `Account`、`Main` 与 `qrcode` chunk），并通过 `authRuntime.ts` 活动上下文兜底将 52 个上游表单 hook 还原为官方原版。

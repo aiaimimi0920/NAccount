@@ -1,0 +1,868 @@
+From 471ca79067c378bcab0b449fbde8f4f357f0e30f Mon Sep 17 00:00:00 2001
+From: aiaimimi0920 <153103332+aiaimimi0920@users.noreply.github.com>
+Date: Fri, 23 Oct 2026 19:13:19 +0800
+Subject: [PATCH] NA-15: unify Neuro themes and accessible management dialogs
+
+NAccount-Patch-Topic: admin-loading
+---
+ admin-panel/app/Setup.tsx                     |   2 +-
+ admin-panel/app/[lang]/layout.tsx             |   4 +-
+ admin-panel/app/[lang]/logs/page.tsx          |   2 +-
+ .../[lang]/orgs/[id]/CreateOrgGroupModal.tsx  |   2 +-
+ .../[lang]/orgs/[id]/UpdateOrgGroupModal.tsx  |   2 +-
+ admin-panel/app/[lang]/orgs/[id]/page.tsx     |   2 +-
+ .../users/[authId]/ImpersonationModal.tsx     |   8 +-
+ .../users/[authId]/ResendInviteModal.tsx      |   5 +-
+ .../users/[authId]/UserOrgGroupModal.tsx      |   2 +-
+ .../[lang]/users/[authId]/UserOrgsModal.tsx   |   2 +-
+ admin-panel/app/global.css                    | 119 +++++++-----------
+ admin-panel/components/ConfirmModal.tsx       |   2 +-
+ admin-panel/components/FieldError.tsx         |   2 +-
+ .../components/InviteUserModal.test.tsx       |  10 ++
+ admin-panel/components/InviteUserModal.tsx    |   4 +-
+ admin-panel/components/RequiredProperty.tsx   |   2 +-
+ .../components/ui/alert-dialog.test.tsx       |  72 +++++++++++
+ admin-panel/components/ui/alert-dialog.tsx    |  43 ++++---
+ admin-panel/components/ui/alert.tsx           |   2 +-
+ admin-panel/components/ui/badge.tsx           |   6 +-
+ admin-panel/components/ui/button.tsx          |   2 +-
+ admin-panel/tailwind.config.ts                |   2 +
+ .../identity-main/authorize-view.test.ts      |  14 ++-
+ server/src/configs/variable.ts                |  16 +--
+ server/src/handlers/identity/view.tsx         |  14 ++-
+ server/src/pages/auth-theme.css               |  56 +++++++++
+ server/src/pages/blocks/Layout.test.tsx       |   4 +-
+ server/src/pages/blocks/Layout.tsx            |   5 +-
+ server/src/pages/client.css                   |   4 +-
+ 29 files changed, 287 insertions(+), 123 deletions(-)
+ create mode 100644 admin-panel/components/ui/alert-dialog.test.tsx
+ create mode 100644 server/src/pages/auth-theme.css
+
+diff --git a/admin-panel/app/Setup.tsx b/admin-panel/app/Setup.tsx
+index 6ea1583855be5924e710ba22dd77fcd14a7ef066..e6de0bdc00892ae97426c794537eca0380072f26 100644
+--- a/admin-panel/app/Setup.tsx
++++ b/admin-panel/app/Setup.tsx
+@@ -212,7 +212,7 @@ const LayoutSetup = ({ children } : PropsWithChildren) => {
+                   src='https://valuemelody.com/logo.svg'
+                   className='mr-3 h-6'
+                 />
+-                <span className='self-center whitespace-nowrap text-medium font-semibold dark:text-white'>
++                <span className='self-center whitespace-nowrap text-medium font-semibold text-success'>
+                   {t('layout.brand')}
+                 </span>
+               </div>
+diff --git a/admin-panel/app/[lang]/layout.tsx b/admin-panel/app/[lang]/layout.tsx
+index 21b673dc73581c313d4cb519d922ec34a817eb61..6094f002b3183adfd7affd2831b51148998d77e3 100644
+--- a/admin-panel/app/[lang]/layout.tsx
++++ b/admin-panel/app/[lang]/layout.tsx
+@@ -4,7 +4,7 @@ import { getMessages } from 'next-intl/server'
+ import { Metadata } from 'next'
+ import Setup from 'app/Setup'
+ 
+-export const metadata: Metadata = { title: 'Melody Auth Admin Panel' }
++export const metadata: Metadata = { title: 'NAccount · Neuro' }
+ 
+ export default async function RootLayout ({
+   children, params,
+@@ -16,7 +16,7 @@ export default async function RootLayout ({
+   const messages = await getMessages()
+ 
+   return (
+-    <html lang={lang}>
++    <html lang={lang} className='dark'>
+       <NextIntlClientProvider messages={messages}>
+         <body>
+           <section className='flex flex-col min-h-screen w-full'>
+diff --git a/admin-panel/app/[lang]/logs/page.tsx b/admin-panel/app/[lang]/logs/page.tsx
+index f8e9e71f4ca43bc19d302508d17e772cf53116ec..4524deaa20d21ea81b1fb956586a7ec9be8a7168 100644
+--- a/admin-panel/app/[lang]/logs/page.tsx
++++ b/admin-panel/app/[lang]/logs/page.tsx
+@@ -54,7 +54,7 @@ const CleanAlert = ({
+ 
+   return (
+     <AlertDialog open={show}>
+-      <AlertDialogContent>
++      <AlertDialogContent onEscapeKeyDown={onCancel}>
+         <AlertDialogHeader>
+           <AlertDialogTitle>
+             {t(
+diff --git a/admin-panel/app/[lang]/orgs/[id]/CreateOrgGroupModal.tsx b/admin-panel/app/[lang]/orgs/[id]/CreateOrgGroupModal.tsx
+index 9faacfc8f87d51e15c718f4cb33ec6ef97d77dc5..f052b8ce5b4202ab69526fc1ce359a1161cd8081 100644
+--- a/admin-panel/app/[lang]/orgs/[id]/CreateOrgGroupModal.tsx
++++ b/admin-panel/app/[lang]/orgs/[id]/CreateOrgGroupModal.tsx
+@@ -40,7 +40,7 @@ const CreateOrgGroupModal = ({
+ 
+   return (
+     <AlertDialog open={show}>
+-      <AlertDialogContent>
++      <AlertDialogContent onEscapeKeyDown={onClose}>
+         <AlertDialogHeader>
+           <AlertDialogTitle>{t('orgGroups.new')}</AlertDialogTitle>
+         </AlertDialogHeader>
+diff --git a/admin-panel/app/[lang]/orgs/[id]/UpdateOrgGroupModal.tsx b/admin-panel/app/[lang]/orgs/[id]/UpdateOrgGroupModal.tsx
+index 991f956fe2eb28a44a59bd243a7f9d2f8facea9d..dd9b1a82970ad4efa6113b3cf4f9d70772b306bb 100644
+--- a/admin-panel/app/[lang]/orgs/[id]/UpdateOrgGroupModal.tsx
++++ b/admin-panel/app/[lang]/orgs/[id]/UpdateOrgGroupModal.tsx
+@@ -49,7 +49,7 @@ const UpdateOrgGroupModal = ({
+ 
+   return (
+     <AlertDialog open={show}>
+-      <AlertDialogContent>
++      <AlertDialogContent onEscapeKeyDown={onClose}>
+         <AlertDialogHeader>
+           <AlertDialogTitle>{t('orgGroups.update')}</AlertDialogTitle>
+         </AlertDialogHeader>
+diff --git a/admin-panel/app/[lang]/orgs/[id]/page.tsx b/admin-panel/app/[lang]/orgs/[id]/page.tsx
+index 66bde5f9c614241e59aa46d67a93f3c09f6c1e5a..73b5cba6b5b49b87250723e98d34e19e6b0148e0 100644
+--- a/admin-panel/app/[lang]/orgs/[id]/page.tsx
++++ b/admin-panel/app/[lang]/orgs/[id]/page.tsx
+@@ -491,7 +491,7 @@ const Page = () => {
+           {enableOrgGroup && !isViewingAllUsers && (
+             <section className='mb-6 flex justify-between'>
+               <section className='flex gap-4 items-center'>
+-                <p className='text-sm text-gray-500'>
++                <p className='text-sm text-muted-foreground'>
+                   {orgGroups?.orgGroups?.length ? t('orgGroups.groups') : t('orgGroups.noGroups')}
+                 </p>
+                 {orgGroups?.orgGroups?.map((orgGroup) => (
+diff --git a/admin-panel/app/[lang]/users/[authId]/ImpersonationModal.tsx b/admin-panel/app/[lang]/users/[authId]/ImpersonationModal.tsx
+index 28973501c714d1fe72728dd46e876d6e69816fa6..98f01414df2638ee95e5fb04f6c3f2559bde14b6 100644
+--- a/admin-panel/app/[lang]/users/[authId]/ImpersonationModal.tsx
++++ b/admin-panel/app/[lang]/users/[authId]/ImpersonationModal.tsx
+@@ -79,7 +79,7 @@ const ImpersonationModal = ({
+ 
+   return (
+     <AlertDialog open={show}>
+-      <AlertDialogContent>
++      <AlertDialogContent onEscapeKeyDown={onClose}>
+         <AlertDialogHeader>
+           <AlertDialogTitle>{t(
+             'impersonateTitle',
+@@ -112,7 +112,7 @@ const ImpersonationModal = ({
+             </Select>
+           </div>
+           {!isConsented && selectedApp && (
+-            <p className='mt-4 text-red-500'>{t('impersonateConsent')}</p>
++            <p className='mt-4 text-destructive'>{t('impersonateConsent')}</p>
+           )}
+           {isConsented && !refreshTokenStorage && selectedApp && (
+             <Button
+@@ -129,7 +129,7 @@ const ImpersonationModal = ({
+                 className='font-bold'
+                 data-testid='impersonateToken'>{t('impersonateToken')}:</p>
+               <p className='break-all mt-2'>{refreshTokenStorage.refreshToken}</p>
+-              <p className='text-sm text-gray-500 mt-4'>{t('impersonateTokenDesc')}</p>
++              <p className='text-sm text-muted-foreground mt-4'>{t('impersonateTokenDesc')}</p>
+               <p className='font-bold mt-6'>{t('impersonateDirect')}:</p>
+               <div className='flex flex-col gap-2 mt-2'>
+                 {selectedApp?.redirectUris.map((uri) => (
+@@ -138,7 +138,7 @@ const ImpersonationModal = ({
+                     href={`${uri}?refresh_token=${refreshTokenStorage.refreshToken}&refresh_token_expires_on=${refreshTokenStorage.expiresOn}&refresh_token_expires_in=${refreshTokenStorage.expiresIn}`}
+                     target='_blank'
+                     rel='noreferrer'
+-                    className='break-all text-blue-500'>
++                    className='break-all text-info'>
+                     {uri}
+                   </a>
+                 ))}
+diff --git a/admin-panel/app/[lang]/users/[authId]/ResendInviteModal.tsx b/admin-panel/app/[lang]/users/[authId]/ResendInviteModal.tsx
+index 0ed9aa019060100570d115a43b7f4c484fbdf3bb..7ae537dfbb4a228b53a7aa297afe53cec50e45e8 100644
+--- a/admin-panel/app/[lang]/users/[authId]/ResendInviteModal.tsx
++++ b/admin-panel/app/[lang]/users/[authId]/ResendInviteModal.tsx
+@@ -81,7 +81,10 @@ const ResendInviteModal = ({
+ 
+   return (
+     <AlertDialog open={show}>
+-      <AlertDialogContent>
++      <AlertDialogContent onEscapeKeyDown={(event) => {
++        if (isLoading) event.preventDefault()
++        else handleClose()
++      }}>
+         <AlertDialogHeader>
+           <AlertDialogTitle>{t('users.resendInvite')}</AlertDialogTitle>
+         </AlertDialogHeader>
+diff --git a/admin-panel/app/[lang]/users/[authId]/UserOrgGroupModal.tsx b/admin-panel/app/[lang]/users/[authId]/UserOrgGroupModal.tsx
+index bb9272ae3360a0dccfa6c24a8f04117d6b26c707..ab8517d5fab3777d0b489688a2d302a5d6ab0623 100644
+--- a/admin-panel/app/[lang]/users/[authId]/UserOrgGroupModal.tsx
++++ b/admin-panel/app/[lang]/users/[authId]/UserOrgGroupModal.tsx
+@@ -64,7 +64,7 @@ const UserOrgGroupModal = ({
+ 
+   return (
+     <AlertDialog open={show}>
+-      <AlertDialogContent>
++      <AlertDialogContent onEscapeKeyDown={onClose}>
+         <AlertDialogHeader>
+           <AlertDialogTitle>{t('users.manageUserOrgGroup')}</AlertDialogTitle>
+         </AlertDialogHeader>
+diff --git a/admin-panel/app/[lang]/users/[authId]/UserOrgsModal.tsx b/admin-panel/app/[lang]/users/[authId]/UserOrgsModal.tsx
+index 365acf0c6488263172a61aa136913d09909245aa..16a0881ee977b81a6a2641976337f4f57897865b 100644
+--- a/admin-panel/app/[lang]/users/[authId]/UserOrgsModal.tsx
++++ b/admin-panel/app/[lang]/users/[authId]/UserOrgsModal.tsx
+@@ -46,7 +46,7 @@ const UserOrgGroupModal = ({
+ 
+   return (
+     <AlertDialog open={show}>
+-      <AlertDialogContent>
++      <AlertDialogContent onEscapeKeyDown={onClose}>
+         <AlertDialogHeader>
+           <AlertDialogTitle>{t('users.manageUserAllOrgs')}</AlertDialogTitle>
+         </AlertDialogHeader>
+diff --git a/admin-panel/app/global.css b/admin-panel/app/global.css
+index d771a63b64c41d5c1b62c14981a110e83a10ab09..dc7b6d2f6f2888342a053942dd0f7cae2ab3a9ca 100644
+--- a/admin-panel/app/global.css
++++ b/admin-panel/app/global.css
+@@ -2,77 +2,46 @@
+ @tailwind components;
+ @tailwind utilities;
+ 
++/* Neuro 精确 HSL 映射，保留 shadcn/Tailwind 语义 API。 */
+ @layer base {
+-  :root {
+-    --background: 0 0% 100%;
+-    --foreground: 0 0% 3.9%;
+-    --card: 0 0% 100%;
+-    --card-foreground: 0 0% 3.9%;
+-    --popover: 0 0% 100%;
+-    --popover-foreground: 0 0% 3.9%;
+-    --primary: 0 0% 9%;
+-    --primary-foreground: 0 0% 98%;
+-    --secondary: 0 0% 96.1%;
+-    --secondary-foreground: 0 0% 9%;
+-    --muted: 0 0% 96.1%;
+-    --muted-foreground: 0 0% 45.1%;
+-    --accent: 0 0% 96.1%;
+-    --accent-foreground: 0 0% 9%;
+-    --destructive: 0 84.2% 60.2%;
+-    --destructive-foreground: 0 0% 98%;
+-    --border: 0 0% 89.8%;
+-    --input: 0 0% 89.8%;
+-    --ring: 0 0% 3.9%;
+-    --chart-1: 12 76% 61%;
+-    --chart-2: 173 58% 39%;
+-    --chart-3: 197 37% 24%;
+-    --chart-4: 43 74% 66%;
+-    --chart-5: 27 87% 67%;
+-    --radius: 0.5rem
+-  ;
+-  --sidebar: var(--background);
+-  --sidebar-foreground: 240 5.3% 26.1%;
+-  --sidebar-primary: 240 5.9% 10%;
+-  --sidebar-primary-foreground: 0 0% 98%;
+-  --sidebar-accent: 240 4.8% 95.9%;
+-  --sidebar-accent-foreground: 240 5.9% 10%;
+-  --sidebar-border: 220 13% 91%;
+-  --sidebar-ring: 217.2 91.2% 59.8%;
+-  --sidebar-background: 0 0% 98%;
+-  }
+-  .dark {
+-    --background: 0 0% 3.9%;
+-    --foreground: 0 0% 98%;
+-    --card: 0 0% 3.9%;
+-    --card-foreground: 0 0% 98%;
+-    --popover: 0 0% 3.9%;
+-    --popover-foreground: 0 0% 98%;
+-    --primary: 0 0% 98%;
+-    --primary-foreground: 0 0% 9%;
+-    --secondary: 0 0% 14.9%;
+-    --secondary-foreground: 0 0% 98%;
+-    --muted: 0 0% 14.9%;
+-    --muted-foreground: 0 0% 63.9%;
+-    --accent: 0 0% 14.9%;
+-    --accent-foreground: 0 0% 98%;
+-    --destructive: 0 62.8% 30.6%;
+-    --destructive-foreground: 0 0% 98%;
+-    --border: 0 0% 14.9%;
+-    --input: 0 0% 14.9%;
+-    --ring: 0 0% 83.1%;
+-    --chart-1: 220 70% 50%;
+-    --chart-2: 160 60% 45%;
+-    --chart-3: 30 80% 55%;
+-    --chart-4: 280 65% 60%;
+-    --chart-5: 340 75% 55%;
+-    --sidebar-background: 240 5.9% 10%;
+-    --sidebar-foreground: 240 4.8% 95.9%;
+-    --sidebar-primary: 224.3 76.3% 48%;
+-    --sidebar-primary-foreground: 0 0% 100%;
+-    --sidebar-accent: 240 3.7% 15.9%;
+-    --sidebar-accent-foreground: 240 4.8% 95.9%;
+-    --sidebar-border: 240 3.7% 15.9%;
+-    --sidebar-ring: 217.2 91.2% 59.8%;
++  :root, .dark {
++    color-scheme: dark;
++    --background: 222.85714286 36.84210526% 3.72549020%; /* #06080d */
++    --foreground: 66.66666667 39.13043478% 95.49019608%; /* #f7f8ef */
++    --card: 216 26.31578947% 7.45098039%; /* #0e1218 */
++    --card-foreground: var(--foreground);
++    --popover: var(--card);
++    --popover-foreground: var(--foreground);
++    --primary: 71.45728643 100% 60.98039216%; /* #d9ff38 */
++    --primary-foreground: 212.72727273 14.66666667% 14.70588235%; /* #20252b */
++    --secondary: 216 30.61224490% 9.60784314%; /* #111720 */
++    --secondary-foreground: var(--foreground);
++    --muted: var(--secondary);
++    --muted-foreground: 203.07692308 6.34146341% 59.80392157%; /* #929a9f */
++    --accent: 210 29.41176471% 13.33333333%; /* #18222c */
++    --accent-foreground: var(--foreground);
++    --destructive: 349.72375691 89.16256158% 60.19607843%; /* #f43f5e */
++    --destructive-foreground: var(--background);
++    --success: 142.08588957 70.56277056% 45.29411765%; /* #22c55e */
++    --info: 188.73786408 94.49541284% 42.74509804%; /* #06b6d4 */
++    --border: 0 0% 100% / .12;
++    --input: var(--border);
++    --ring: var(--primary);
++    --chart-1: var(--info);
++    --chart-2: var(--success);
++    --chart-3: var(--primary);
++    --chart-4: var(--destructive);
++    --chart-5: var(--muted-foreground);
++    --radius: .375rem;
++    --sidebar-background: 217.5 36.36363636% 4.31372549%; /* #070a0f */
++    --sidebar: var(--sidebar-background);
++    --sidebar-foreground: var(--foreground);
++    --sidebar-primary: var(--primary);
++    --sidebar-primary-foreground: var(--primary-foreground);
++    --sidebar-accent: var(--secondary);
++    --sidebar-accent-foreground: var(--primary);
++    --sidebar-border: var(--border);
++    --sidebar-ring: var(--ring);
+   }
+ }
+ 
+@@ -83,4 +52,12 @@
+   body {
+     @apply bg-background text-foreground;
+   }
+-}
+\ No newline at end of file
++  :is(button, a, input, select, textarea):focus-visible {
++    outline: 2px solid hsl(var(--ring));
++    outline-offset: 3px;
++  }
++  input, select, textarea { background-color: hsl(var(--secondary)); }
++  @media (prefers-reduced-motion: reduce) {
++    *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
++  }
++}
+diff --git a/admin-panel/components/ConfirmModal.tsx b/admin-panel/components/ConfirmModal.tsx
+index a37223f68f746364e37e53a1ea7b759bc0aab14c..2ea8a224e79e4862cea40e688f8c64b35d8e0afe 100644
+--- a/admin-panel/components/ConfirmModal.tsx
++++ b/admin-panel/components/ConfirmModal.tsx
+@@ -23,7 +23,7 @@ const ConfirmModal = ({
+ 
+   return (
+     <AlertDialog open={show}>
+-      <AlertDialogContent>
++      <AlertDialogContent onEscapeKeyDown={onClose}>
+         <AlertDialogHeader>
+           <AlertDialogTitle>{title}</AlertDialogTitle>
+         </AlertDialogHeader>
+diff --git a/admin-panel/components/FieldError.tsx b/admin-panel/components/FieldError.tsx
+index 6ec4014703f5ecd5a7059ad181032c8cc4064c12..6ba4d78f227f9cdc4df231d02d2e49bec20f78a4 100644
+--- a/admin-panel/components/FieldError.tsx
++++ b/admin-panel/components/FieldError.tsx
+@@ -3,7 +3,7 @@ const FieldError = ({ error }: {
+ }) => {
+   return (
+     <p
+-      className='text-red-600 mt-2'
++      className='text-destructive mt-2'
+       data-testid='fieldError'>{error}
+     </p>
+   )
+diff --git a/admin-panel/components/InviteUserModal.test.tsx b/admin-panel/components/InviteUserModal.test.tsx
+index 684b7bbc8aebb98543a09a30b108af7eac8cb822..636d1a3908b9ad4e6528ab805e16fd55052faaad 100644
+--- a/admin-panel/components/InviteUserModal.test.tsx
++++ b/admin-panel/components/InviteUserModal.test.tsx
+@@ -94,6 +94,16 @@ describe(
+       },
+     )
+ 
++    it(
++      'Escape cancels without sending an invitation',
++      () => {
++        render(<InviteUserModal show={true} onClose={mockOnClose} onInvited={mockOnInvited} />)
++        fireEvent.keyDown(document.activeElement!, { key: 'Escape' })
++        expect(mockOnClose).toHaveBeenCalledTimes(1)
++        expect(mockPostInvitation).not.toHaveBeenCalled()
++      },
++    )
++
+     it(
+       'does not render modal content when show is false',
+       () => {
+diff --git a/admin-panel/components/InviteUserModal.tsx b/admin-panel/components/InviteUserModal.tsx
+index f2d3b8a178dd83f45376513efac5840cf8c5616b..6b69a0af460a05f9190beb51d2df4af5b59a7630 100644
+--- a/admin-panel/components/InviteUserModal.tsx
++++ b/admin-panel/components/InviteUserModal.tsx
+@@ -114,7 +114,7 @@ const InviteUserModal = ({
+ 
+   return (
+     <AlertDialog open={show}>
+-      <AlertDialogContent>
++      <AlertDialogContent onEscapeKeyDown={handleClose}>
+         <AlertDialogHeader>
+           <AlertDialogTitle>{t('users.inviteUser')}</AlertDialogTitle>
+         </AlertDialogHeader>
+@@ -122,7 +122,7 @@ const InviteUserModal = ({
+           <div className='flex flex-col gap-1'>
+             <Label htmlFor='invite-email'>
+               {t('users.email')}
+-              <span className='text-red-500 ml-1'>*</span>
++              <span className='text-destructive ml-1'>*</span>
+             </Label>
+             <Input
+               id='invite-email'
+diff --git a/admin-panel/components/RequiredProperty.tsx b/admin-panel/components/RequiredProperty.tsx
+index ec9ef88e89e61c53219a4702c105caba1ac31d7c..9b5c580d0b1b53c2e047d28a3623b8200a68a3d7 100644
+--- a/admin-panel/components/RequiredProperty.tsx
++++ b/admin-panel/components/RequiredProperty.tsx
+@@ -4,7 +4,7 @@ const RequiredProperty = ({ title }: {
+   return (
+     <div className='flex items-center gap-1'>
+       {title}
+-      <span className='text-red-500 text-xl'>*</span>
++      <span className='text-destructive text-xl'>*</span>
+     </div>
+   )
+ }
+diff --git a/admin-panel/components/ui/alert-dialog.test.tsx b/admin-panel/components/ui/alert-dialog.test.tsx
+new file mode 100644
+index 0000000000000000000000000000000000000000..5311d2da01a3a680b8b1d4d8d49cef807f39cc82
+--- /dev/null
++++ b/admin-panel/components/ui/alert-dialog.test.tsx
+@@ -0,0 +1,72 @@
++import { useState } from 'react'
++import { fireEvent, screen, waitFor } from '@testing-library/react'
++import { describe, expect, it, vi } from 'vitest'
++import { render } from 'vitest.setup'
++import {
++  AlertDialog, AlertDialogContent, AlertDialogTitle, AlertDialogDescription,
++  AlertDialogCancel,
++} from './alert-dialog'
++
++const Fixture = ({ pending = false, onCancel = vi.fn(), onCloseAutoFocus }: {
++  pending?: boolean;
++  onCancel?: () => void;
++  onCloseAutoFocus?: (event: Event) => void;
++}) => {
++  const [open, setOpen] = useState(false)
++  const cancel = () => { onCancel(); setOpen(false) }
++  return <>
++    <button onClick={() => setOpen(true)}>Open fixture</button>
++    <AlertDialog open={open}>
++      <AlertDialogContent
++        onCloseAutoFocus={onCloseAutoFocus}
++        onEscapeKeyDown={(event) => {
++          if (pending) event.preventDefault()
++          else cancel()
++        }}
++      >
++        <AlertDialogTitle>Fixture title</AlertDialogTitle>
++        <AlertDialogDescription>Fixture description</AlertDialogDescription>
++        <AlertDialogCancel disabled={pending} onClick={cancel}>Cancel fixture</AlertDialogCancel>
++      </AlertDialogContent>
++    </AlertDialog>
++  </>
++}
++
++const openFixture = () => {
++  const opener = screen.getByRole('button', { name: 'Open fixture' })
++  opener.focus()
++  fireEvent.click(opener)
++  return opener
++}
++
++describe('Neuro controlled alert dialog', () => {
++  it('uses the panel surface and restores the external opener after Escape', async () => {
++    const cancel = vi.fn()
++    render(<Fixture onCancel={cancel} />)
++    const opener = openFixture()
++    expect(screen.getByRole('alertdialog')).toHaveClass('bg-popover', 'text-popover-foreground', 'overflow-y-auto')
++    fireEvent.keyDown(document.activeElement!, { key: 'Escape' })
++    await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument())
++    await waitFor(() => expect(opener).toHaveFocus())
++    expect(cancel).toHaveBeenCalledTimes(1)
++  })
++
++  it('does not cancel a pending action when Escape is blocked', () => {
++    const cancel = vi.fn()
++    render(<Fixture pending onCancel={cancel} />)
++    openFixture()
++    fireEvent.keyDown(document.activeElement!, { key: 'Escape' })
++    expect(screen.getByRole('alertdialog')).toBeInTheDocument()
++    expect(screen.getByRole('button', { name: 'Cancel fixture' })).toBeDisabled()
++    expect(cancel).not.toHaveBeenCalled()
++  })
++
++  it('preserves a consumer override of close autofocus', async () => {
++    const onCloseAutoFocus = vi.fn((event: Event) => event.preventDefault())
++    render(<Fixture onCloseAutoFocus={onCloseAutoFocus} />)
++    openFixture()
++    fireEvent.click(screen.getByRole('button', { name: 'Cancel fixture' }))
++    await waitFor(() => expect(onCloseAutoFocus).toHaveBeenCalledTimes(1))
++    expect(screen.getByRole('button', { name: 'Open fixture' })).not.toHaveFocus()
++  })
++})
+diff --git a/admin-panel/components/ui/alert-dialog.tsx b/admin-panel/components/ui/alert-dialog.tsx
+index 8a72b8788941f43cae1fa408b5de4a82a2842657..5137b48251b5f04e74e4b2785827d641ec069a0b 100644
+--- a/admin-panel/components/ui/alert-dialog.tsx
++++ b/admin-panel/components/ui/alert-dialog.tsx
+@@ -36,21 +36,36 @@ const AlertDialogContent = React.forwardRef<
+   React.ComponentPropsWithoutRef<typeof AlertDialogPrimitive.Content>
+ >((
+   {
+-    className, ...props
++    className, onOpenAutoFocus, onCloseAutoFocus, ...props
+   }, ref,
+-) => (
+-  <AlertDialogPortal>
+-    <AlertDialogOverlay />
+-    <AlertDialogPrimitive.Content
+-      ref={ref}
+-      className={cn(
+-        'fixed left-[50%] top-[50%] z-50 grid w-full max-w-lg translate-x-[-50%] translate-y-[-50%] gap-4 border bg-background p-6 shadow-lg duration-200 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[state=closed]:slide-out-to-left-1/2 data-[state=closed]:slide-out-to-top-[48%] data-[state=open]:slide-in-from-left-1/2 data-[state=open]:slide-in-from-top-[48%] sm:rounded-lg',
+-        className,
+-      )}
+-      {...props}
+-    />
+-  </AlertDialogPortal>
+-))
++) => {
++  const opener = React.useRef<HTMLElement | null>(null)
++  return (
++    <AlertDialogPortal>
++      <AlertDialogOverlay />
++      <AlertDialogPrimitive.Content
++        ref={ref}
++        className={cn(
++          'fixed left-[50%] top-[50%] z-50 grid w-full max-w-lg max-h-[calc(100dvh-2rem)] overflow-y-auto translate-x-[-50%] translate-y-[-50%] gap-4 border bg-popover text-popover-foreground p-6 shadow-lg duration-200 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[state=closed]:slide-out-to-left-1/2 data-[state=closed]:slide-out-to-top-[48%] data-[state=open]:slide-in-from-left-1/2 data-[state=open]:slide-in-from-top-[48%] sm:rounded-lg',
++          className,
++        )}
++        onOpenAutoFocus={(event) => {
++          opener.current = document.activeElement instanceof HTMLElement ? document.activeElement : null
++          onOpenAutoFocus?.(event)
++        }}
++        onCloseAutoFocus={(event) => {
++          onCloseAutoFocus?.(event)
++          // 受控弹窗可能没有 Radix Trigger，关闭后仍须回到实际发起控件。
++          if (!event.defaultPrevented && opener.current?.isConnected) {
++            event.preventDefault()
++            opener.current.focus()
++          }
++        }}
++        {...props}
++      />
++    </AlertDialogPortal>
++  )
++})
+ AlertDialogContent.displayName = AlertDialogPrimitive.Content.displayName
+ 
+ const AlertDialogHeader = ({
+diff --git a/admin-panel/components/ui/alert.tsx b/admin-panel/components/ui/alert.tsx
+index d22c001723acee40a8a6802dbb452960aacea914..fb40a72b838fad33e9690485a4b44567c00db42e 100644
+--- a/admin-panel/components/ui/alert.tsx
++++ b/admin-panel/components/ui/alert.tsx
+@@ -14,7 +14,7 @@ const alertVariants = cva(
+         destructive:
+           'border-destructive/50 text-destructive dark:border-destructive [&>svg]:text-destructive',
+         warning:
+-          'border-yellow-500/50 text-yellow-500 dark:border-yellow-500 [&>svg]:text-yellow-500',
++          'border-primary/50 text-primary dark:border-primary [&>svg]:text-primary',
+       },
+     },
+     defaultVariants: { variant: 'default' },
+diff --git a/admin-panel/components/ui/badge.tsx b/admin-panel/components/ui/badge.tsx
+index ac56ea944c2add9552e5b410129f10c5a11a4753..0b2426a3a6c6c4340d5b552599c749fa7b4f63e4 100644
+--- a/admin-panel/components/ui/badge.tsx
++++ b/admin-panel/components/ui/badge.tsx
+@@ -18,11 +18,11 @@ const badgeVariants = cva(
+           'border-transparent bg-destructive text-destructive-foreground shadow hover:bg-destructive/80',
+         outline: 'text-foreground',
+         warning:
+-          'border-transparent bg-yellow-500 text-white shadow hover:bg-yellow-500/80',
++          'border-transparent bg-primary text-primary-foreground shadow hover:bg-primary/80',
+         success:
+-          'border-transparent bg-green-500 text-white shadow hover:bg-green-500/80',
++          'border-success/40 bg-success/15 text-success hover:bg-success/25',
+         info:
+-          'border-transparent bg-blue-500 text-white shadow hover:bg-blue-500/80',
++          'border-info/40 bg-info/15 text-info hover:bg-info/25',
+       },
+     },
+     defaultVariants: { variant: 'default' },
+diff --git a/admin-panel/components/ui/button.tsx b/admin-panel/components/ui/button.tsx
+index 701831d4cd38835a2b9f5b02bd62822712788f49..7bd2979704d1d6a0c264453e39bfd261d21f1e75 100644
+--- a/admin-panel/components/ui/button.tsx
++++ b/admin-panel/components/ui/button.tsx
+@@ -20,7 +20,7 @@ const buttonVariants = cva(
+         secondary:
+           'bg-secondary text-secondary-foreground shadow-sm hover:bg-secondary/80',
+         ghost: 'hover:bg-accent hover:text-accent-foreground',
+-        link: 'text-primary underline-offset-4 hover:underline',
++        link: 'text-info underline-offset-4 hover:underline',
+       },
+       size: {
+         default: 'h-9 px-4 py-2',
+diff --git a/admin-panel/tailwind.config.ts b/admin-panel/tailwind.config.ts
+index 4be68f000b205e85fe431c505301bdb1e5ce2974..d60a715248d0e1829308e09505be90ac6d5a4356 100644
+--- a/admin-panel/tailwind.config.ts
++++ b/admin-panel/tailwind.config.ts
+@@ -50,6 +50,8 @@ const config: Config = {
+         border: 'hsl(var(--border))',
+         input: 'hsl(var(--input))',
+         ring: 'hsl(var(--ring))',
++        success: 'hsl(var(--success) / <alpha-value>)',
++        info: 'hsl(var(--info) / <alpha-value>)',
+         chart: {
+           1: 'hsl(var(--chart-1))',
+           2: 'hsl(var(--chart-2))',
+diff --git a/server/src/__tests__/normal/identity-main/authorize-view.test.ts b/server/src/__tests__/normal/identity-main/authorize-view.test.ts
+index 286c9cc18ce66a0b57d5000b117f1cf0d9632ee7..a649c3daaefb4392adf0b2c7c7563ad194f692c0 100644
+--- a/server/src/__tests__/normal/identity-main/authorize-view.test.ts
++++ b/server/src/__tests__/normal/identity-main/authorize-view.test.ts
+@@ -1,7 +1,7 @@
+ import { Database } from 'better-sqlite3'
+ import app from 'index'
+ import {
+-  afterEach, beforeEach, describe, expect, test,
++  afterEach, beforeEach, describe, expect, test, vi,
+ } from 'vitest'
+ import {
+   variableConfig, routeConfig,
+@@ -14,6 +14,7 @@ import {
+ import {
+   getApp, getSignInRequest, getAuthorizeParams,
+ } from 'tests/identity'
++import { brandingService } from 'services'
+ 
+ let db: Database
+ 
+@@ -29,6 +30,15 @@ afterEach(async () => {
+ describe(
+   'get /authorize-view',
+   () => {
++    test('resolves branding once for the validated HTML authorize request', async () => {
++      const spy = vi.spyOn(brandingService, 'getBranding')
++      try {
++        const response = await getSignInRequest(db, routeConfig.IdentityRoute.AuthorizeView, await getApp(db))
++        expect(response.status).toBe(200)
++        expect(await response.text()).toContain('--auth-panel-color:#0e1218')
++        expect(spy).toHaveBeenCalledTimes(1)
++      } finally { spy.mockRestore() }
++    })
+     test('returns validated, non-cacheable public flags for the portal dialog', async () => {
+       const params = new URLSearchParams(await getAuthorizeParams(await getApp(db)))
+       params.set('locale', 'zh')
+@@ -338,6 +348,8 @@ describe(
+         expect(html).toContain('--secondary-button-label-color:darkgray')
+         expect(html).toContain('--secondary-button-border-color:blue')
+         expect(html).toContain('--critical-indicator-color:yellow')
++        expect(html).toContain('--auth-scheme:normal')
++        expect(html).toContain('--auth-panel-color:color-mix(in srgb,var(--layout-color) 95%,var(--label-color))')
+       },
+     )
+ 
+diff --git a/server/src/configs/variable.ts b/server/src/configs/variable.ts
+index 40d4d1f6b6b680ad46a99475338895ce6fd0e75d..0075381a627f6b06885a4dd4c82d25d8ba2ec98d 100644
+--- a/server/src/configs/variable.ts
++++ b/server/src/configs/variable.ts
+@@ -6,14 +6,14 @@ export enum DefaultBranding {
+   FontFamily = 'Inter',
+   FontUrl = 'https://fonts.googleapis.com/css2?family=Inter:wght@400..600&display=swap',
+   LayoutColor = '#06080d',
+-  LabelColor = 'black',
+-  PrimaryButtonColor = 'white',
+-  PrimaryButtonLabelColor = 'black',
+-  PrimaryButtonBorderColor = 'lightgray',
+-  SecondaryButtonColor = 'white',
+-  SecondaryButtonLabelColor = 'black',
+-  SecondaryButtonBorderColor = 'white',
+-  CriticalIndicatorColor = '#e00',
++  LabelColor = '#f7f8ef',
++  PrimaryButtonColor = '#d9ff38',
++  PrimaryButtonLabelColor = '#20252b',
++  PrimaryButtonBorderColor = '#d9ff38',
++  SecondaryButtonColor = '#111720',
++  SecondaryButtonLabelColor = '#f7f8ef',
++  SecondaryButtonBorderColor = 'rgba(255,255,255,0.12)',
++  CriticalIndicatorColor = '#f43f5e',
+ }
+ 
+ export enum DefaultEnvironment {
+diff --git a/server/src/handlers/identity/view.tsx b/server/src/handlers/identity/view.tsx
+index 5b8d6d28d8a79bf78c513a653e3ad47f6b77842d..54ed840b1bec62c3803fb7bb81ce073b8659dff7 100644
+--- a/server/src/handlers/identity/view.tsx
++++ b/server/src/handlers/identity/view.tsx
+@@ -1,4 +1,5 @@
+ import { freshUser } from 'services/accountEpoch'
++import type { Branding } from 'services/branding'
+ import { Context } from 'hono'
+ import { env } from 'hono/adapter'
+ import { html, raw } from 'hono/html'
+@@ -10,6 +11,7 @@ import {
+   typeConfig,
+   localeConfig,
+   routeConfig,
++  variableConfig,
+ } from 'configs'
+ import {
+   brandingService, kvService,
+@@ -28,13 +30,16 @@ const viewRender = async (
+   propsScript: HtmlEscapedString | Promise<HtmlEscapedString>,
+   locale: typeConfig.Locale,
+   org?: string,
++  resolvedBranding?: Branding,
+ ) => {
+-  const branding = await brandingService.getBranding(
++  const branding = resolvedBranding ?? await brandingService.getBranding(
+     c,
+     org,
+   )
+ 
+   const { ENVIRONMENT } = env(c)
++  const neuroSurfaces = branding.layoutColor === variableConfig.DefaultBranding.LayoutColor
++    && branding.labelColor === variableConfig.DefaultBranding.LabelColor
+ 
+   return c.html(<html lang={locale}>
+     <head>
+@@ -87,6 +92,12 @@ const viewRender = async (
+             --secondary-button-label-color: ${branding.secondaryButtonLabelColor};
+             --secondary-button-border-color: ${branding.secondaryButtonBorderColor};
+             --critical-indicator-color: ${branding.criticalIndicatorColor};
++            --auth-scheme: ${neuroSurfaces ? 'dark' : 'normal'};
++            --auth-link-color: ${neuroSurfaces ? '#06b6d4' : branding.labelColor};
++            --auth-panel-color: ${neuroSurfaces ? '#0e1218' : 'color-mix(in srgb, var(--layout-color) 95%, var(--label-color))'};
++            --auth-control-color: ${neuroSurfaces ? '#111720' : 'color-mix(in srgb, var(--layout-color) 92%, var(--label-color))'};
++            --auth-muted-color: ${neuroSurfaces ? '#929a9f' : 'color-mix(in srgb, var(--label-color) 72%, var(--layout-color))'};
++            --auth-line-color: ${neuroSurfaces ? 'rgba(255,255,255,.12)' : 'color-mix(in srgb, var(--label-color) 24%, transparent)'};
+           }
+         `}
+       </Style>
+@@ -183,6 +194,7 @@ export const getAuthorizeView = async (c: Context<typeConfig.Context>) => {
+     propsScript,
+     queryDto.locale,
+     queryDto.org,
++    branding,
+   )
+ }
+ 
+diff --git a/server/src/pages/auth-theme.css b/server/src/pages/auth-theme.css
+new file mode 100644
+index 0000000000000000000000000000000000000000..bee875a70750bd03a40d1745ed809cb56d4c812f
+--- /dev/null
++++ b/server/src/pages/auth-theme.css
+@@ -0,0 +1,56 @@
++/* 独立登录、注册、MFA、授权和安全流程共用；组织显式 branding 仍由服务端注入。 */
++.naccount-auth {
++  color-scheme: var(--auth-scheme, dark);
++  --auth-panel: var(--auth-panel-color, #0e1218);
++  --auth-control: var(--auth-control-color, #111720);
++  --auth-muted: var(--auth-muted-color, #929a9f);
++  --auth-line: var(--auth-line-color, rgba(255, 255, 255, .12));
++  --auth-focus: var(--primary-button-color, #d9ff38);
++  --text-width: min(280px, calc(100vw - 68px));
++  padding: 24px 16px;
++}
++.naccount-auth .auth-card {
++  max-width: 100%;
++  background: var(--auth-panel);
++  border: 1px solid var(--auth-line);
++  border-radius: 4px;
++  border-top: 2px solid #22c55e;
++}
++.naccount-auth :is(input:not([type=checkbox]), select, textarea) {
++  color: var(--label-color);
++  background: var(--auth-control);
++  border: 1px solid var(--auth-line);
++  border-radius: 3px;
++}
++.naccount-auth input::placeholder { color: var(--auth-muted); opacity: 1; }
++.naccount-auth input[type=checkbox] { accent-color: var(--auth-focus); }
++.naccount-auth :is(button, input, select, a, textarea):focus-visible {
++  outline: 2px solid var(--auth-focus);
++  outline-offset: 3px;
++}
++.naccount-auth .bg-primaryButtonColor:hover:not(:disabled) {
++  background: color-mix(in srgb, var(--primary-button-color) 86%, white);
++}
++.naccount-auth .bg-secondaryButtonColor:hover:not(:disabled) {
++  background: color-mix(in srgb, var(--secondary-button-color) 92%, var(--secondary-button-label-color));
++}
++.naccount-auth button:disabled { opacity: .65; cursor: not-allowed; }
++.naccount-auth button { max-width: 100%; }
++.naccount-auth .code-input { width: min(42px, calc((100vw - 108px) / 6)); min-width: 0; }
++.naccount-auth a { color: var(--auth-link-color, #06b6d4); text-underline-offset: 3px; }
++.naccount-auth :is(.text-gray-500, .text-gray) { color: var(--auth-muted); }
++.naccount-auth .text-blue-500 { color: var(--auth-link-color, #06b6d4); }
++.naccount-auth .text-yellow-500 { color: var(--auth-focus); }
++.naccount-auth .text-green-500 { color: #22c55e; }
++.naccount-auth :is(.text-criticalIndicatorColor, .text-red-500) { color: var(--critical-indicator-color); }
++.naccount-auth .bg-criticalIndicatorColor {
++  color: var(--label-color);
++  background: color-mix(in srgb, var(--critical-indicator-color) 12%, var(--auth-panel));
++  border: 1px solid var(--critical-indicator-color);
++}
++@media (max-width: 480px) {
++  .naccount-auth .auth-card > section { padding: 24px 16px; }
++}
++@media (prefers-reduced-motion: reduce) {
++  .naccount-auth * { transition: none; animation: none; scroll-behavior: auto; }
++}
+diff --git a/server/src/pages/blocks/Layout.test.tsx b/server/src/pages/blocks/Layout.test.tsx
+index c4fedfa8443b8abcd01b5ee8ff563eb8335c65d6..7a07a4671246d344792d1f5c4a2ced5ec60461c9 100644
+--- a/server/src/pages/blocks/Layout.test.tsx
++++ b/server/src/pages/blocks/Layout.test.tsx
+@@ -45,7 +45,9 @@ describe(
+       const container = setup()
+       expect(variableConfig.DefaultBranding.LayoutColor).toBe('#06080d')
+       expect(container.querySelector('main')?.classList.contains('bg-layoutColor')).toBe(true)
+-      expect(container.querySelector('main > section')?.classList.contains('bg-white')).toBe(true)
++      expect(container.querySelector('main')?.classList.contains('naccount-auth')).toBe(true)
++      expect(container.querySelector('main > section')?.classList.contains('auth-card')).toBe(true)
++      expect(container.querySelector('main > section')?.classList.contains('bg-white')).toBe(false)
+     })
+ 
+     it(
+diff --git a/server/src/pages/blocks/Layout.tsx b/server/src/pages/blocks/Layout.tsx
+index 4acd8b2fe44cf2548028548521194b0cd2da6e5e..edea53851dbff7820072ca8d79fe9303535952bd 100644
+--- a/server/src/pages/blocks/Layout.tsx
++++ b/server/src/pages/blocks/Layout.tsx
+@@ -13,8 +13,8 @@ export interface LayoutProps {
+ const Layout = ({
+   children, locale, locales, logoUrl, onSwitchLocale,
+ }: LayoutProps) => (
+-  <main className='flex flex-col items-center justify-center w-full h-screen bg-layoutColor text-labelColor'>
+-    <section className='flex flex-col justify-center items-center bg-white box-shadow rounded-lg'>
++  <main className='naccount-auth flex flex-col items-center justify-center w-full min-h-screen bg-layoutColor text-labelColor'>
++    <section className='auth-card flex flex-col justify-center items-center'>
+       <section className='flex flex-col items-center gap-4 max-h-[80vh] p-8 overflow-y-auto overflow-x-hidden'>
+         <header className='relative flex w-full justify-center items-center'>
+           <img
+@@ -37,6 +37,7 @@ const Layout = ({
+         </section>
+         <a
+           target='__blank'
++          rel='noopener noreferrer'
+           href='https://github.com/ValueMelody/melody-auth'
+           className='text-sm mt-2'
+         >
+diff --git a/server/src/pages/client.css b/server/src/pages/client.css
+index 14b5d003d2a024af9dc616ff2604b0552be1878d..9e741ef1c1a539d1e299ac3a33f2d323ad4ffe50 100644
+--- a/server/src/pages/client.css
++++ b/server/src/pages/client.css
+@@ -1,7 +1,8 @@
+ @import 'tailwindcss';
++@import './auth-theme.css';
+ 
+ @theme {
+-  --color-green: #008000;
++  --color-green: #22c55e;
+   --color-layoutColor: var(--layout-color);
+   --color-labelColor: var(--label-color);
+   --font-default: var(--font-default);
+@@ -17,4 +18,5 @@
+ 
+ body {
+   @apply p-0 m-0 font-(family-name:--font-default) text-base bg-layoutColor;
++  font-family: var(--font-default), "Segoe UI", "Microsoft YaHei", sans-serif;
+ }

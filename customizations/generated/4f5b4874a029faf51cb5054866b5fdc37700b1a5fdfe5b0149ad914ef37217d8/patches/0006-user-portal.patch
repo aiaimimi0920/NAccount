@@ -1,0 +1,44 @@
+From e070108ab9ab93e6bd45dca4059c47a2f192fb7b Mon Sep 17 00:00:00 2001
+From: aiaimimi0920 <153103332+aiaimimi0920@users.noreply.github.com>
+Date: Fri, 9 Oct 2026 20:29:29 -0700
+Subject: [PATCH] fix(NA-10): avoid D1 remote trigger statement splitting
+
+NAccount-Patch-Topic: user-portal
+---
+ .../migrations/sqlite/0050_naccount_security.sql | 16 ++++++----------
+ 1 file changed, 6 insertions(+), 10 deletions(-)
+
+diff --git a/server/migrations/sqlite/0050_naccount_security.sql b/server/migrations/sqlite/0050_naccount_security.sql
+index 78bdfe6fb2d9e1a66bd1de716de396552e45c411..b87de608d1d7b5d54254ec44df2cef35ea8b96a8 100644
+--- a/server/migrations/sqlite/0050_naccount_security.sql
++++ b/server/migrations/sqlite/0050_naccount_security.sql
+@@ -27,9 +27,8 @@ CREATE TABLE naccount_otp_use (userId INTEGER NOT NULL, secretHash TEXT NOT NULL
+ CREATE TRIGGER naccount_security_apply BEFORE UPDATE OF used ON naccount_security_request
+ WHEN NEW.used=1 AND OLD.used=0
+ BEGIN
+-  SELECT CASE WHEN OLD.ready<>1 OR OLD.attempts>5 OR OLD.expiresAt<=CAST(strftime('%s','now') AS INTEGER)*1000
+-    THEN RAISE(ABORT,'security_request_invalid') END;
+-  SELECT CASE WHEN NOT EXISTS (SELECT 1 FROM user WHERE id=OLD.userId AND isActive=1 AND deletedAt IS NULL AND securityVersion=OLD.version
++  SELECT RAISE(ABORT,'security_request_invalid') WHERE OLD.ready<>1 OR OLD.attempts>5 OR OLD.expiresAt<=CAST(strftime('%s','now') AS INTEGER)*1000;
++  SELECT RAISE(ABORT,'security_owner_changed') WHERE NOT EXISTS (SELECT 1 FROM user WHERE id=OLD.userId AND isActive=1 AND deletedAt IS NULL AND securityVersion=OLD.version
+     AND COALESCE(password,'')=json_extract(OLD.guard,'$.password')
+     AND COALESCE(email,'')=json_extract(OLD.guard,'$.email')
+     AND otpSecret=json_extract(OLD.guard,'$.otpSecret')
+@@ -38,13 +37,10 @@ BEGIN
+     AND otpVerified=json_extract(OLD.guard,'$.otpVerified')
+     AND COALESCE(smsPhoneNumber,'')=json_extract(OLD.guard,'$.smsPhoneNumber')
+     AND smsPhoneNumberVerified=json_extract(OLD.guard,'$.smsPhoneNumberVerified')
+-    AND COALESCE(recoveryCodeHash,'')=json_extract(OLD.guard,'$.recoveryCodeHash'))
+-    THEN RAISE(ABORT,'security_owner_changed') END;
+-  SELECT CASE WHEN OLD.action='email' AND EXISTS(SELECT 1 FROM user WHERE id<>OLD.userId AND deletedAt IS NULL AND lower(trim(email))=OLD.target)
+-    THEN RAISE(ABORT,'security_email_unavailable') END;
+-  SELECT CASE WHEN OLD.action='delete' AND EXISTS(SELECT 1 FROM user_role ur JOIN role r ON r.id=ur.roleId WHERE ur.userId=OLD.userId AND ur.deletedAt IS NULL AND r.name='super_admin' AND r.deletedAt IS NULL)
+-    AND NOT EXISTS(SELECT 1 FROM user_role ur JOIN role r ON r.id=ur.roleId JOIN user u ON u.id=ur.userId WHERE u.id<>OLD.userId AND u.isActive=1 AND u.deletedAt IS NULL AND ur.deletedAt IS NULL AND r.name='super_admin' AND r.deletedAt IS NULL)
+-    THEN RAISE(ABORT,'security_last_admin') END;
++    AND COALESCE(recoveryCodeHash,'')=json_extract(OLD.guard,'$.recoveryCodeHash'));
++  SELECT RAISE(ABORT,'security_email_unavailable') WHERE OLD.action='email' AND EXISTS(SELECT 1 FROM user WHERE id<>OLD.userId AND deletedAt IS NULL AND lower(trim(email))=OLD.target);
++  SELECT RAISE(ABORT,'security_last_admin') WHERE OLD.action='delete' AND EXISTS(SELECT 1 FROM user_role ur JOIN role r ON r.id=ur.roleId WHERE ur.userId=OLD.userId AND ur.deletedAt IS NULL AND r.name='super_admin' AND r.deletedAt IS NULL)
++    AND NOT EXISTS(SELECT 1 FROM user_role ur JOIN role r ON r.id=ur.roleId JOIN user u ON u.id=ur.userId WHERE u.id<>OLD.userId AND u.isActive=1 AND u.deletedAt IS NULL AND ur.deletedAt IS NULL AND r.name='super_admin' AND r.deletedAt IS NULL);
+ 
+   UPDATE user SET
+     email=CASE WHEN OLD.action='email' THEN OLD.target WHEN OLD.action='delete' THEN NULL ELSE email END,

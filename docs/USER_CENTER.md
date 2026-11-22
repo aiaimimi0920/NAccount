@@ -1,5 +1,12 @@
 # NA-09：普通用户入口、个人中心与社交身份绑定
 
+## NA-17：全栈安全、边缘性能与多端双语升级（SBA 3.3.0 已导出补丁栈）
+
+- **安全版本全路径闭环与非破坏性手机换绑**：找回密码重置（`resetUserPassword`）、OAuth 策略改密/改邮箱/重置 MFA、管理员停用账号均递增 `securityVersion` 即刻吊销旧令牌；个人中心仅换绑联系人手机号（`naccount_profile.phone`）在原子事务中校验身份快照并保持 `securityVersion` 不变（`signInRequired: false`），不再把用户踢下线。
+- **社交墓碑防撞与无邮箱解锁**：修复已注销原生社交账号重新登录触发唯一约束 HTTP 500 的问题（明确返回 403 `UserDisabled`），管理员删号同步清理 `naccount_profile` 与社交标签；尚未绑定验证邮箱的原生社交主账号可在个人中心直接完成邮箱验证绑定与自助注销（注销确认兼容中文 `删除账户` 与英文 `DELETE`）。
+- **个人中心新能力与中英双语**：抽离 `pages/account/i18n.ts` 支持 `zh`/`en` 双语切换；新增活跃设备与会话管理弹窗（`GET/DELETE /account/api/sessions`）；应用目录通过 SQLite `0051_naccount_optimization.sql` 支持 `isPublic`、`homepageUrl`、`description` 及自助撤销应用授权（`DELETE /account/api/apps/:clientId/consent`，同步吊销对应 refresh token）；当启用 `ALLOW_PASSKEY_ENROLLMENT` 时开放 Passkey 管理入口；支持新标签页通过非敏感提示标记执行 `prompt=none` 静默恢复会话。
+- **边缘计算加速与补丁交付**：密码哈希升级为 WebCrypto `PBKDF2-SHA256`（存量 bcrypt 登录平滑升级），恢复码升级为 `SHA-256`；限流升级为 `DB.batch` 往返合并，过期记录清理与登录日志异步化（`waitUntil`）；前端 Vite 按需分包加载并合并单一 `client.css`。定制提交 `9ba7db9`（`admin-loading`）与 `13e7943505c59898ebb49495ea342fe9985902d1`（`user-portal`）已导出 generation `4f5b4874a029faf51cb5054866b5fdc37700b1a5fdfe5b0149ad914ef37217d8`（共 15 patches）。
+
 ## NA-14：首次资料读取性能优化（3.2.6 已上线并真实验收）
 
 3.2.5 的真实隔离账号测试已完成注册、consent、邮箱 MFA 实际收件与验证、退出再登录、

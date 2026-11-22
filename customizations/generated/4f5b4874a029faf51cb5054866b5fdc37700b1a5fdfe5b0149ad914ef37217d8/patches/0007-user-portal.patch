@@ -1,0 +1,63 @@
+From 3785a7ba18cb7fbb3ac12d33abac20dc94c04cbe Mon Sep 17 00:00:00 2001
+From: aiaimimi0920 <153103332+aiaimimi0920@users.noreply.github.com>
+Date: Fri, 9 Oct 2026 21:40:00 -0700
+Subject: [PATCH] Match authentication page background to user portal
+
+NAccount-Patch-Topic: user-portal
+---
+ server/src/configs/variable.ts          | 2 +-
+ server/src/pages/blocks/Layout.test.tsx | 9 ++++++++-
+ server/src/pages/client.css             | 2 +-
+ 3 files changed, 10 insertions(+), 3 deletions(-)
+
+diff --git a/server/src/configs/variable.ts b/server/src/configs/variable.ts
+index 135d425bcc532a8a5f8cfbaaa810345fe016409d..40d4d1f6b6b680ad46a99475338895ce6fd0e75d 100644
+--- a/server/src/configs/variable.ts
++++ b/server/src/configs/variable.ts
+@@ -5,7 +5,7 @@ import {
+ export enum DefaultBranding {
+   FontFamily = 'Inter',
+   FontUrl = 'https://fonts.googleapis.com/css2?family=Inter:wght@400..600&display=swap',
+-  LayoutColor = 'lightgray',
++  LayoutColor = '#06080d',
+   LabelColor = 'black',
+   PrimaryButtonColor = 'white',
+   PrimaryButtonLabelColor = 'black',
+diff --git a/server/src/pages/blocks/Layout.test.tsx b/server/src/pages/blocks/Layout.test.tsx
+index edfb527a3a94123bbb0a2a5fea53874a2bf1304a..c4fedfa8443b8abcd01b5ee8ff563eb8335c65d6 100644
+--- a/server/src/pages/blocks/Layout.test.tsx
++++ b/server/src/pages/blocks/Layout.test.tsx
+@@ -5,7 +5,7 @@ import {
+ import { render } from 'hono/jsx/dom'
+ import Layout from './Layout'
+ import { layout } from 'pages/tools/locale'
+-import { typeConfig } from 'configs'
++import { typeConfig, variableConfig } from 'configs'
+ 
+ // Unit tests for the Layout Component
+ 
+@@ -41,6 +41,13 @@ describe(
+       onSwitchLocale.mockReset()
+     })
+ 
++    it('uses the portal background outside the focused authentication card', () => {
++      const container = setup()
++      expect(variableConfig.DefaultBranding.LayoutColor).toBe('#06080d')
++      expect(container.querySelector('main')?.classList.contains('bg-layoutColor')).toBe(true)
++      expect(container.querySelector('main > section')?.classList.contains('bg-white')).toBe(true)
++    })
++
+     it(
+       'renders children content',
+       () => {
+diff --git a/server/src/pages/client.css b/server/src/pages/client.css
+index 69eb29ad8a1fb2318f7527ffaf8e887492ef84c1..14b5d003d2a024af9dc616ff2604b0552be1878d 100644
+--- a/server/src/pages/client.css
++++ b/server/src/pages/client.css
+@@ -16,5 +16,5 @@
+ }
+ 
+ body {
+-  @apply p-0 m-0 font-(family-name:--font-default) text-base;
++  @apply p-0 m-0 font-(family-name:--font-default) text-base bg-layoutColor;
+ }

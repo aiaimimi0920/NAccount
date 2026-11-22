@@ -70,6 +70,7 @@ class StackTests(unittest.TestCase):
         git(repo, "config", "user.name", "NAccount Test")
         git(repo, "config", "user.email", "naccount-test@localhost")
         git(repo, "config", "core.autocrlf", "false")
+        git(repo, "config", "core.longpaths", "true")
 
     @staticmethod
     def commit(repo, message):
@@ -191,11 +192,22 @@ class StackTests(unittest.TestCase):
             self.stack.update()
         (self.stack.source / "hello.txt").write_text("resolved both intentions\n", encoding="utf-8")
         git(self.stack.source, "add", "hello.txt")
-        git(self.stack.source, "-c", "core.editor=true", "rebase", "--continue")
+        with patch.dict(os.environ, {"GIT_EDITOR": "false"}):
+            git(self.stack.source, "-c", "core.editor=:", "rebase", "--continue")
         new = self.stack.finalize()
         self.assertEqual(len(new["patches"]), 1)
         self.assertFalse(self.stack.pending_path().exists())
         self.stack.verify()
+
+    def test_prune_removes_inactive_generations_while_preserving_active_lock(self):
+        self.personal("v1\n")
+        latest = self.personal("v2\n", "second.txt")
+        generated_dir = self.stack.catalog / "generated"
+        self.assertEqual(len(list(generated_dir.iterdir())), 3)
+        result = self.stack.prune()
+        self.assertEqual(len(result["prunedGenerations"]), 2)
+        self.assertEqual(len(list(generated_dir.iterdir())), 1)
+        self.assertEqual(self.stack.verify()["head"], latest["head"])
 
     def test_abort_requires_explicit_git_abort(self):
         self.conflict()
@@ -205,6 +217,32 @@ class StackTests(unittest.TestCase):
         self.stack.abandon()
         self.stack.verify()
         self.assertFalse(self.stack.pending_path().exists())
+
+
+class RepositoryContractTests(unittest.TestCase):
+    TEXT_SUFFIXES = {".py", ".ps1", ".md", ".json", ".yml", ".yaml", ".mjs", ".txt", ".gitattributes", ".gitignore"}
+
+    def test_active_repository_catalog_lock_is_valid(self):
+        repo_root = Path(__file__).resolve().parents[1]
+        lock = Stack(repo_root).verify(catalog_only=True)
+        self.assertEqual(lock["schemaVersion"], 1)
+        self.assertTrue(lock["base"])
+        self.assertTrue(lock["head"])
+
+    def test_tracked_text_files_are_utf8_without_bom(self):
+        repo_root = Path(__file__).resolve().parents[1]
+        tracked = git(repo_root, "ls-files").splitlines()
+        for rel in tracked:
+            path = repo_root / rel
+            if not path.is_file():
+                continue
+            if path.suffix.lower() in self.TEXT_SUFFIXES or path.name in self.TEXT_SUFFIXES:
+                raw = path.read_bytes()
+                self.assertFalse(raw.startswith(b"\xef\xbb\xbf"), f"UTF-8 BOM is forbidden: {rel}")
+                try:
+                    raw.decode("utf-8", errors="strict")
+                except UnicodeDecodeError as exc:
+                    self.fail(f"Invalid UTF-8 encoding in {rel}: {exc}")
 
 
 if __name__ == "__main__":
